@@ -233,30 +233,17 @@ function chooseAICol(ai) {
   const valid = COL_PREF.filter(c => copy[0][c] === 0);
 
   if (difficulty === 'easy') {
-    // 即詰み・即ブロックのみ検出、他はランダム
-    for (const c of valid) {
-      let r = ROWS-1; while (r >= 0 && copy[r][c]) r--;
-      copy[r][c] = ai;
-      if (hasWin(copy, r, c, ai)) { copy[r][c] = 0; return c; }
-      copy[r][c] = 0;
-    }
-    const hu = 3 - ai;
-    for (const c of valid) {
-      let r = ROWS-1; while (r >= 0 && copy[r][c]) r--;
-      copy[r][c] = hu;
-      if (hasWin(copy, r, c, hu)) { copy[r][c] = 0; return c; }
-      copy[r][c] = 0;
-    }
-    return valid[Math.floor(Math.random() * valid.length)];
+    const { c } = minimax(copy, 2, -Infinity, Infinity, true, ai);
+    return c;
   }
 
   if (difficulty === 'normal') {
-    const { c } = minimax(copy, 4, -Infinity, Infinity, true, ai);
+    const { c } = minimax(copy, 3, -Infinity, Infinity, true, ai);
     return c;
   }
 
   if (difficulty === 'hard') {
-    const { c } = minimax(copy, 7, -Infinity, Infinity, true, ai);
+    const { c } = minimax(copy, 5, -Infinity, Infinity, true, ai);
     return c;
   }
 
@@ -360,11 +347,11 @@ function hit(e, cx, cy, bw, bh) {
 // ── 難易度定義 ────────────────────────────────────
 const DIFF_LEVELS = [
   { key: 'easy',     label: 'かんたん',          color: '#44dd88',
-    desc: '即詰み・即ブロックのみ。ランダム。' },
+    desc: '2手先読み。初心者向け。' },
   { key: 'normal',   label: 'ふつう',             color: '#ffe066',
-    desc: '4手先読み。ミスあり。' },
+    desc: '3手先読み。ミスあり。' },
   { key: 'hard',     label: 'むずかしい',         color: '#e94560',
-    desc: '7手先読み。後攻でも勝機あり。' },
+    desc: '5手先読み。手ごたえあり。' },
   { key: 'veryhard', label: 'とてもむずかしい',   color: '#cc44ff',
     desc: '15手先読み＋置換表。強敵。' },
 ];
