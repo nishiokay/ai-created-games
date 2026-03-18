@@ -5,6 +5,7 @@ const COLS = 7, ROWS = 6, CELL = 78;
 const TOP = 90;
 canvas.width  = COLS * CELL;       // 546
 canvas.height = TOP + ROWS * CELL; // 558
+canvas.style.height = 'auto'; // CSS でアスペクト比を維持
 
 const COL_P1    = '#e94560';
 const COL_P2    = '#ffe066';

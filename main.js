@@ -5,6 +5,8 @@ const livesEl = document.getElementById('lives');
 const messageEl = document.getElementById('message');
 const restartBtn = document.getElementById('restart');
 
+canvas.style.height = 'auto'; // CSS でアスペクト比を維持（スマホ対応）
+
 const W = canvas.width;
 const H = canvas.height;
 

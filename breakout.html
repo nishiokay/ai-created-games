@@ -16,6 +16,7 @@
       font-family: 'Segoe UI', sans-serif;
       color: #eee;
       padding: 8px 0;
+      overflow-x: hidden;
     }
     #ui {
       display: flex;
@@ -29,8 +30,9 @@
       border-radius: 4px;
       background: #16213e;
       display: block;
-      width: min(480px, calc(100vw - 8px));
-      aspect-ratio: 480 / 400;
+      min-width: 0;
+      max-width: calc(100% - 8px);
+      height: auto;
       touch-action: none;
     }
     #message {

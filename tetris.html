@@ -14,11 +14,13 @@
       justify-content: center;
       min-height: 100vh;
       padding: 8px 0 16px;
+      overflow-x: hidden;
     }
     canvas {
       display: block;
-      width: min(640px, 100vw);
-      aspect-ratio: 640 / 448;
+      min-width: 0;
+      max-width: 100%;
+      height: auto;
       touch-action: none;
     }
     #touch-controls {

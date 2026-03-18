@@ -1,5 +1,6 @@
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+canvas.style.height = 'auto'; // CSS でアスペクト比を維持（スマホ対応）
 
 // --- Sega Tetris (1988) 画面レイアウト ---
 // スクリーン: 640×448 (System 16 解像度 320×224 の 2倍、等倍表示でくっきり)
