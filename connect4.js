@@ -18,6 +18,7 @@ const W = canvas.width, H = canvas.height;
 let board, player, phase, winCells, vsAI, humanPlayer, hoverCol, aiPending;
 let difficulty = 'normal';
 let posScore = 0, posEvalDone = true; // 局面評価スコア (player1 視点)
+let undoStack, undosLeft; // 待った機能
 // phase: 'select' | 'cpu_setup' | 'playing' | 'over'
 
 function newGame(ai, humanP) {
@@ -29,6 +30,8 @@ function newGame(ai, humanP) {
   winCells    = null;
   hoverCol    = -1;
   aiPending   = false;
+  undoStack   = [];
+  undosLeft   = 3;
   TT.clear();
   posScore = 0; posEvalDone = true;
   if (vsAI && player !== humanPlayer) triggerAI();
@@ -446,6 +449,22 @@ function drawGame() {
     }
   }
 
+  // ── 待ったボタン ──
+  {
+    const active = undosLeft > 0 && undoStack.length > 0 && !aiPending;
+    const bx = W - 102, by = 6, bw = 96, bh = 26;
+    ctx.fillStyle = active ? '#0d2a1a' : '#151515';
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.fill();
+    ctx.strokeStyle = active ? '#44dd88' : '#2a3a2a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.stroke();
+    ctx.fillStyle = active ? '#88ffaa' : '#3a5a3a';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 13px Arial, sans-serif';
+    ctx.fillText(`↩ 待った (${undosLeft})`, bx + bw / 2, by + bh - 7);
+    ctx.lineWidth = 1;
+  }
+
   // ── 局面評価バー ──
   {
     const BAR_W = 260, BAR_H = 9;
@@ -552,6 +571,7 @@ canvas.addEventListener('click', e => {
     return;
   }
   if (phase === 'over') { phase = 'select'; return; }
+  if (phase === 'playing' && hit(e, W - 102 + 48, 6 + 13, 96, 26)) { undo(); return; }
   if (aiPending || (vsAI && player !== humanPlayer)) return;
   const { x } = getCanvasXY(e);
   playCol(Math.floor(x / CELL));
@@ -559,6 +579,7 @@ canvas.addEventListener('click', e => {
 
 document.addEventListener('keydown', e => {
   if (e.code === 'KeyR') { phase = 'select'; return; }
+  if (e.code === 'KeyZ') { undo(); return; }
   if (phase !== 'playing' || aiPending) return;
   if (vsAI && player !== humanPlayer) return;
   if (e.code === 'ArrowLeft')  hoverCol = Math.max(0,      (hoverCol < 0 ? 3 : hoverCol) - 1);
@@ -574,12 +595,27 @@ function playCol(col) {
   if (col < 0 || col >= COLS) return;
   const row = dropRow(col);
   if (row < 0) return;
+  // 人間が打つタイミングだけチェックポイントを保存
+  if (!vsAI || player === humanPlayer) {
+    undoStack.push({ board: board.map(r => [...r]), player });
+  }
   board[row][col] = player;
   winCells = checkWin(row, col);
   if (winCells || isDraw()) { phase = 'over'; return; }
   player = 3 - player;
   if (vsAI && player !== humanPlayer) triggerAI();
   evalPosition(); // 手を打つたびに局面評価を更新
+}
+
+// ── 待った ────────────────────────────────────────
+function undo() {
+  if (undosLeft <= 0 || undoStack.length === 0 || phase !== 'playing' || aiPending) return;
+  const snap = undoStack.pop();
+  board = snap.board;
+  player = snap.player;
+  winCells = null;
+  undosLeft--;
+  evalPosition();
 }
 
 // ── タッチ対応 ────────────────────────────────────
