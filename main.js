@@ -48,7 +48,7 @@ function initGame() {
   state = 'idle';
   scoreEl.textContent = score;
   livesEl.textContent = lives;
-  messageEl.textContent = 'スペースキーまたはクリックでスタート';
+  messageEl.textContent = 'タップ / クリック / SPACE でスタート';
   restartBtn.style.display = 'none';
 }
 
@@ -65,9 +65,21 @@ restartBtn.addEventListener('click', () => { initGame(); loop(); });
 // マウス/タッチでパドル操作
 canvas.addEventListener('mousemove', e => {
   const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
+  const mx = (e.clientX - rect.left) * (W / rect.width);
   paddle.x = Math.max(0, Math.min(W - paddle.w, mx - paddle.w / 2));
 });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.touches[0].clientX - rect.left) * (W / rect.width);
+  paddle.x = Math.max(0, Math.min(W - paddle.w, mx - paddle.w / 2));
+}, { passive: false });
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (state === 'idle') launch();
+}, { passive: false });
 
 function launch() {
   ball.launched = true;
@@ -156,7 +168,7 @@ function update() {
       ball.vy = -BALL_SPEED;
       ball.launched = false;
       state = 'idle';
-      messageEl.textContent = 'スペースキーまたはクリックで再開';
+      messageEl.textContent = 'タップ / クリック / SPACE で再開';
     }
     return;
   }

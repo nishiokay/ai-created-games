@@ -594,6 +594,24 @@ function playCol(col) {
   evalPosition(); // 手を打つたびに局面評価を更新
 }
 
+// ── タッチ対応 ────────────────────────────────────
+// touchend → click をシミュレート（getCanvasXY がスケール補正済み）
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  canvas.dispatchEvent(new MouseEvent('click', {
+    clientX: t.clientX, clientY: t.clientY, bubbles: true,
+  }));
+}, { passive: false });
+
+// touchmove → ホバー列更新
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (phase !== 'playing' || aiPending) return;
+  const { x } = getCanvasXY(e.touches[0]);
+  hoverCol = Math.min(COLS - 1, Math.max(0, Math.floor(x / CELL)));
+}, { passive: false });
+
 // ── メインループ ──────────────────────────────────
 phase = 'select';
 (function loop() { draw(); requestAnimationFrame(loop); })();

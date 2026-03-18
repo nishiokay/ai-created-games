@@ -380,7 +380,7 @@ function drawGameOver() {
   ctx.fillText('GAME OVER', FX + COLS * BLOCK / 2, FY + ROWS * BLOCK / 2 - 12);
   ctx.fillStyle = '#aaddff';
   ctx.font = 'bold 12px Arial, sans-serif';
-  ctx.fillText('SPACE to restart', FX + COLS * BLOCK / 2, FY + ROWS * BLOCK / 2 + 10);
+  ctx.fillText('SPACE / タップ でリスタート', FX + COLS * BLOCK / 2, FY + ROWS * BLOCK / 2 + 10);
   ctx.textAlign = 'left';
 }
 
@@ -397,8 +397,8 @@ function drawNameEntry() {
 
   ctx.fillStyle = '#aaddff';
   ctx.font = 'bold 12px Arial, sans-serif';
-  ctx.fillText('↑↓:文字  ←→:移動', cx, FY + 100);
-  ctx.fillText('Enter で決定', cx, FY + 120);
+  ctx.fillText('↑↓:文字  ←→:移動  Enter:決定', cx, FY + 100);
+  ctx.fillText('タッチ: 上下スワイプ=文字 左右=移動 タップ=決定', cx, FY + 118);
 
   // 文字スロット
   const slotW = 36, slotH = 40, gap = 8;
@@ -520,3 +520,89 @@ function startGame() {
 startGame();
 lastTime = performance.now();
 requestAnimationFrame(gameLoop);
+
+// --- モバイルタッチ対応 ---
+(function setupMobileControls() {
+  // タッチデバイス検出時にボタンを表示
+  window.addEventListener('touchstart', () => {
+    document.getElementById('touch-controls').style.display = 'flex';
+  }, { once: true });
+
+  // キャンバスタッチ: BGM開始 / ゲームオーバー再スタート / ネームエントリ
+  let touchX0 = 0, touchY0 = 0;
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    touchX0 = e.touches[0].clientX;
+    touchY0 = e.touches[0].clientY;
+    if (!bgmStarted) {
+      bgmStarted = true;
+      if (state === 'playing') startBGM();
+    }
+    if (state === 'gameover') startGame();
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', e => {
+    if (state !== 'name_entry') return;
+    const dx = e.changedTouches[0].clientX - touchX0;
+    const dy = e.changedTouches[0].clientY - touchY0;
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 20) {
+      // 左右スワイプ: カーソル移動
+      if (dx < 0) nameCursor = Math.max(0, nameCursor - 1);
+      else        nameCursor = Math.min(2, nameCursor + 1);
+    } else if (Math.abs(dy) > 20) {
+      // 上下スワイプ: 文字変更
+      if (dy < 0) nameChars[nameCursor] = String.fromCharCode(
+        nameChars[nameCursor] === 'A' ? 90 : nameChars[nameCursor].charCodeAt(0) - 1);
+      else        nameChars[nameCursor] = String.fromCharCode(
+        nameChars[nameCursor] === 'Z' ? 65 : nameChars[nameCursor].charCodeAt(0) + 1);
+    } else {
+      // タップ: 決定
+      const name = nameChars.join('');
+      highlightRank = insertHighScore(name, score);
+      state = 'gameover';
+    }
+  }, { passive: true });
+
+  // ボタン設定ヘルパー
+  function heldBtn(id, action) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let iv = null;
+    el.addEventListener('touchstart', e => {
+      e.preventDefault();
+      action();
+      iv = setInterval(action, 80);
+    }, { passive: false });
+    el.addEventListener('touchend', e => { e.preventDefault(); clearInterval(iv); }, { passive: false });
+    el.addEventListener('touchcancel', () => clearInterval(iv));
+  }
+
+  function tapBtn(id, action) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('touchstart', e => { e.preventDefault(); action(); }, { passive: false });
+  }
+
+  heldBtn('tc-left', () => {
+    if (state === 'playing' && isValid(current.shape, current.x - 1, current.y)) current.x--;
+  });
+  heldBtn('tc-right', () => {
+    if (state === 'playing' && isValid(current.shape, current.x + 1, current.y)) current.x++;
+  });
+  heldBtn('tc-down', () => {
+    if (state !== 'playing') return;
+    if (isValid(current.shape, current.x, current.y + 1)) { current.y++; score++; }
+    else lock();
+  });
+  tapBtn('tc-rotate', () => {
+    if (state !== 'playing') return;
+    const rotated = rotate(current.shape);
+    if (isValid(rotated, current.x, current.y)) current.shape = rotated;
+  });
+  tapBtn('tc-drop', () => {
+    if (state !== 'playing') return;
+    while (isValid(current.shape, current.x, current.y + 1)) current.y++;
+    lock();
+  });
+})();
