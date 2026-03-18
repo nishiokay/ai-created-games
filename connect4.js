@@ -19,6 +19,7 @@ let board, player, phase, winCells, vsAI, humanPlayer, hoverCol, aiPending;
 let difficulty = 'normal';
 let posScore = 0, posEvalDone = true; // 局面評価スコア (player1 視点)
 let undoStack, undosLeft; // 待った機能
+let fallingPiece = null;  // 落下アニメーション { col, targetRow, y, vy, player }
 // phase: 'select' | 'cpu_setup' | 'playing' | 'over'
 
 function newGame(ai, humanP) {
@@ -32,6 +33,7 @@ function newGame(ai, humanP) {
   aiPending   = false;
   undoStack   = [];
   undosLeft   = 3;
+  fallingPiece = null;
   TT.clear();
   posScore = 0; posEvalDone = true;
   if (vsAI && player !== humanPlayer) triggerAI();
@@ -510,7 +512,7 @@ function drawGame() {
   ctx.fillStyle = COL_BOARD;
   ctx.fillRect(0, TOP, W, ROWS * CELL);
 
-  if (phase === 'playing' && !aiPending && hoverCol >= 0 && hoverCol < COLS) {
+  if (phase === 'playing' && !aiPending && !fallingPiece && hoverCol >= 0 && hoverCol < COLS) {
     const r = dropRow(hoverCol);
     if (r >= 0) {
       const x = colX(hoverCol);
@@ -537,6 +539,13 @@ function drawGame() {
   for (let c = 1; c < COLS; c++) {
     ctx.beginPath(); ctx.moveTo(c*CELL, TOP); ctx.lineTo(c*CELL, H); ctx.stroke();
   }
+
+  // 落下中のコマを最前面に描画
+  if (fallingPiece) {
+    circle(colX(fallingPiece.col), fallingPiece.y, CELL/2 - 6,
+      pColor(fallingPiece.player), pColor(fallingPiece.player));
+  }
+
   ctx.textAlign = 'left';
 }
 
@@ -572,7 +581,7 @@ canvas.addEventListener('click', e => {
   }
   if (phase === 'over') { phase = 'select'; return; }
   if (phase === 'playing' && hit(e, W - 102 + 48, 6 + 13, 96, 26)) { undo(); return; }
-  if (aiPending || (vsAI && player !== humanPlayer)) return;
+  if (aiPending || fallingPiece || (vsAI && player !== humanPlayer)) return;
   const { x } = getCanvasXY(e);
   playCol(Math.floor(x / CELL));
 });
@@ -580,7 +589,7 @@ canvas.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.code === 'KeyR') { phase = 'select'; return; }
   if (e.code === 'KeyZ') { undo(); return; }
-  if (phase !== 'playing' || aiPending) return;
+  if (phase !== 'playing' || aiPending || fallingPiece) return;
   if (vsAI && player !== humanPlayer) return;
   if (e.code === 'ArrowLeft')  hoverCol = Math.max(0,      (hoverCol < 0 ? 3 : hoverCol) - 1);
   if (e.code === 'ArrowRight') hoverCol = Math.min(COLS-1, (hoverCol < 0 ? 3 : hoverCol) + 1);
@@ -599,17 +608,44 @@ function playCol(col) {
   if (!vsAI || player === humanPlayer) {
     undoStack.push({ board: board.map(r => [...r]), player });
   }
-  board[row][col] = player;
-  winCells = checkWin(row, col);
-  if (winCells || isDraw()) { phase = 'over'; return; }
-  player = 3 - player;
-  if (vsAI && player !== humanPlayer) triggerAI();
-  evalPosition(); // 手を打つたびに局面評価を更新
+  startFall(col, row, player); // 落下アニメーション開始（着地後に盤面更新）
+}
+
+// ── 落下アニメーション ────────────────────────────
+function startFall(col, targetRow, p) {
+  fallingPiece = { col, targetRow, y: 0, vy: 4, player: p, bounced: false };
+}
+
+function updateFall() {
+  if (!fallingPiece) return;
+  const fp = fallingPiece;
+  const targetY = cellY(fp.targetRow);
+  fp.vy += 0.9; // 重力
+  fp.y  += fp.vy;
+  if (fp.y >= targetY) {
+    if (!fp.bounced && fp.vy > 6) {
+      // 着地バウンス
+      fp.y = targetY;
+      fp.vy = -fp.vy * 0.28;
+      fp.bounced = true;
+    } else {
+      // 着地完了
+      fp.y = targetY;
+      const { col, targetRow, player: p } = fp;
+      fallingPiece = null;
+      board[targetRow][col] = p;
+      winCells = checkWin(targetRow, col);
+      if (winCells || isDraw()) { phase = 'over'; return; }
+      player = 3 - player;
+      if (vsAI && player !== humanPlayer) triggerAI();
+      evalPosition();
+    }
+  }
 }
 
 // ── 待った ────────────────────────────────────────
 function undo() {
-  if (undosLeft <= 0 || undoStack.length === 0 || phase !== 'playing' || aiPending) return;
+  if (undosLeft <= 0 || undoStack.length === 0 || phase !== 'playing' || aiPending || fallingPiece) return;
   const snap = undoStack.pop();
   board = snap.board;
   player = snap.player;
@@ -631,11 +667,11 @@ canvas.addEventListener('touchend', e => {
 // touchmove → ホバー列更新
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
-  if (phase !== 'playing' || aiPending) return;
+  if (phase !== 'playing' || aiPending || fallingPiece) return;
   const { x } = getCanvasXY(e.touches[0]);
   hoverCol = Math.min(COLS - 1, Math.max(0, Math.floor(x / CELL)));
 }, { passive: false });
 
 // ── メインループ ──────────────────────────────────
 phase = 'select';
-(function loop() { draw(); requestAnimationFrame(loop); })();
+(function loop() { updateFall(); draw(); requestAnimationFrame(loop); })();
