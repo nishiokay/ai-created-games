@@ -440,8 +440,7 @@ function drawGame() {
   ctx.fillText(statusText, W/2, 30);
 
   if (phase === 'over') {
-    ctx.fillStyle = '#6688aa'; ctx.font = '12px Arial, sans-serif';
-    ctx.fillText('R キー またはクリックでリスタート', W/2, 54);
+    // 上部は勝敗テキストのみ（詳細はオーバーレイに表示）
   } else {
     circle(W/2 - 82, 22, 9, pColor(player));
     if (vsAI) {
@@ -544,6 +543,51 @@ function drawGame() {
   if (fallingPiece) {
     circle(colX(fallingPiece.col), fallingPiece.y, CELL/2 - 6,
       pColor(fallingPiece.player), pColor(fallingPiece.player));
+  }
+
+  // ── ゲームオーバーオーバーレイ ──
+  if (phase === 'over') {
+    const cx = W / 2, cy = TOP + ROWS * CELL / 2;
+
+    // 背景パネル
+    ctx.fillStyle = 'rgba(5, 15, 30, 0.82)';
+    ctx.beginPath(); ctx.roundRect(cx - 140, cy - 72, 280, 144, 14); ctx.fill();
+
+    if (winCells) {
+      const col = pColor(player);
+      // 勝者の色でボーダー
+      ctx.strokeStyle = col; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.roundRect(cx - 140, cy - 72, 280, 144, 14); ctx.stroke();
+
+      // コマアイコン
+      ctx.save();
+      ctx.shadowColor = col; ctx.shadowBlur = 20;
+      circle(cx, cy - 38, 20, col);
+      ctx.restore();
+
+      // 勝者ラベル
+      ctx.textAlign = 'center';
+      ctx.fillStyle = col;
+      ctx.font = 'bold 28px Arial, sans-serif';
+      ctx.fillText(`${pLabel(player)} の勝ち！`, cx, cy + 10);
+
+      // サブテキスト
+      ctx.fillStyle = '#6688aa'; ctx.font = '13px Arial, sans-serif';
+      ctx.fillText('タップ / クリック / R キーでリスタート', cx, cy + 40);
+    } else {
+      // 引き分け
+      ctx.strokeStyle = '#556677'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(cx - 140, cy - 72, 280, 144, 14); ctx.stroke();
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#aaaaaa';
+      ctx.font = 'bold 28px Arial, sans-serif';
+      ctx.fillText('引き分け', cx, cy + 10);
+
+      ctx.fillStyle = '#556677'; ctx.font = '13px Arial, sans-serif';
+      ctx.fillText('タップ / クリック / R キーでリスタート', cx, cy + 40);
+    }
+    ctx.lineWidth = 1;
   }
 
   ctx.textAlign = 'left';
