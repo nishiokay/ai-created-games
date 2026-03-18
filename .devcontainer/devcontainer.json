@@ -1,7 +1,7 @@
 {
-  "name": "claude-code-book-template",
+  "name": "ai-created-games",
   "image": "mcr.microsoft.com/devcontainers/base:bookworm",
-  "workspaceFolder": "/workspaces/claude-code-book-template",
+  "workspaceFolder": "/workspaces/ai-created-games",
   "features": {
     "ghcr.io/devcontainers/features/node:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {}

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ブロック崩し</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+      color: #eee;
+    }
+    #ui {
+      display: flex;
+      gap: 40px;
+      margin-bottom: 12px;
+      font-size: 18px;
+      letter-spacing: 1px;
+    }
+    canvas {
+      border: 2px solid #e94560;
+      border-radius: 4px;
+      background: #16213e;
+      display: block;
+    }
+    #message {
+      margin-top: 14px;
+      font-size: 20px;
+      min-height: 28px;
+      color: #e94560;
+    }
+    #restart {
+      margin-top: 10px;
+      padding: 8px 28px;
+      background: #e94560;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      display: none;
+    }
+    #restart:hover { background: #c73652; }
+    #back {
+      margin-top: 16px;
+      font-size: 13px;
+      color: #666;
+      text-decoration: none;
+    }
+    #back:hover { color: #aaa; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <span>スコア: <b id="score">0</b></span>
+    <span>ライフ: <b id="lives">3</b></span>
+  </div>
+  <canvas id="canvas" width="480" height="400"></canvas>
+  <div id="message">スペースキーまたはクリックでスタート</div>
+  <button id="restart">もう一度</button>
+  <a id="back" href="index.html">← ゲーム選択に戻る</a>
+  <script src="main.js"></script>
+</body>
+</html>

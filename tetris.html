@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>テトリス</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="640" height="448"></canvas>
+  <a href="index.html" style="position:fixed;bottom:12px;left:50%;transform:translateX(-50%);color:#444;font:13px sans-serif;text-decoration:none;" onmouseover="this.style.color='#aaa'" onmouseout="this.style.color='#444'">← ゲーム選択に戻る</a>
+  <script src="tetris.js"></script>
+</body>
+</html>
