@@ -1,6 +1,8 @@
-# claude-code-book-template
+# AIコーディングエージェントで作成したゲーム
 
-ゲーム集
+以下の書籍を見つつハンズオンで作成したゲーム集
+https://github.com/GenerativeAgents/claude-code-book
+
 - ブロック崩し
 - テトリス
 - 4目並べ
