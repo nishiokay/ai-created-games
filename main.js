@@ -413,7 +413,7 @@ function initGame() {
   messageEl.textContent = 'タップ / クリック / SPACE でスタート';
   restartBtn.style.display = 'none';
   paused = false;
-  pauseBtn.textContent = '⏸';
+  pauseBtn.textContent = '⏸ ポーズ';
 }
 
 // --- 入力 ---
@@ -433,7 +433,7 @@ restartBtn.addEventListener('click', () => { initGame(); loop(); });
 pauseBtn.addEventListener('click', () => {
   if (state !== 'playing' && !paused) return;
   paused = !paused;
-  pauseBtn.textContent = paused ? '▶' : '⏸';
+  pauseBtn.textContent = paused ? '▶ 再開' : '⏸ ポーズ';
 });
 
 canvas.addEventListener('mousemove', e => {
