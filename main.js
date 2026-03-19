@@ -412,7 +412,8 @@ function initGame() {
   livesEl.textContent = lives;
   messageEl.textContent = 'タップ / クリック / SPACE でスタート';
   restartBtn.style.display = 'none';
-  pauseBtn.style.display = 'none';
+  paused = false;
+  pauseBtn.textContent = '⏸';
 }
 
 // --- 入力 ---
@@ -432,7 +433,7 @@ restartBtn.addEventListener('click', () => { initGame(); loop(); });
 pauseBtn.addEventListener('click', () => {
   if (state !== 'playing' && !paused) return;
   paused = !paused;
-  pauseBtn.textContent = paused ? '▶ 再開' : '⏸ ポーズ';
+  pauseBtn.textContent = paused ? '▶' : '⏸';
 });
 
 canvas.addEventListener('mousemove', e => {
@@ -457,8 +458,6 @@ function launch() {
   for (const b of balls) b.launched = true;
   state = 'playing';
   messageEl.textContent = '';
-  pauseBtn.style.display = 'inline-block';
-  pauseBtn.textContent = '⏸ ポーズ';
 }
 
 // --- 描画 ---
@@ -611,7 +610,6 @@ function update() {
       state = 'gameover';
       messageEl.textContent = 'ゲームオーバー';
       restartBtn.style.display = 'inline-block';
-      pauseBtn.style.display = 'none';
     } else {
       balls = [createServeBall()];
       state = 'idle';
@@ -626,7 +624,6 @@ function update() {
     startClear();
     messageEl.textContent = '';
     restartBtn.style.display = 'inline-block';
-    pauseBtn.style.display = 'none';
   }
 }
 
