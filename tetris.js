@@ -60,6 +60,7 @@ function insertHighScore(name, s) {
 // --- 状態 ---
 let board, current, next, score, level, lines, state, dropTimer, dropInterval;
 let nameChars, nameCursor, highlightRank;
+let paused = false;
 
 // --- BGM (Web Audio API) ---
 let audioCtx = null, masterGain = null;
@@ -269,6 +270,20 @@ function draw() {
 
   if (state === 'gameover') drawGameOver();
   if (state === 'name_entry') drawNameEntry();
+  if (paused) drawPause();
+}
+
+function drawPause() {
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(FX - 2, FY - 2, COLS * BLOCK + 4, ROWS * BLOCK + 4);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffe066';
+  ctx.font = 'bold 28px Arial, sans-serif';
+  ctx.fillText('PAUSE', FX + COLS * BLOCK / 2, FY + ROWS * BLOCK / 2 - 12);
+  ctx.fillStyle = '#aaddff';
+  ctx.font = 'bold 12px Arial, sans-serif';
+  ctx.fillText('P キー / ⏸ ボタンで再開', FX + COLS * BLOCK / 2, FY + ROWS * BLOCK / 2 + 14);
+  ctx.textAlign = 'left';
 }
 
 function drawLeftPanel() {
@@ -368,7 +383,8 @@ function drawRightPanel() {
   label('↓   落下',       rx, gy + 20, '#ccddff', 12);
   label('↑/Z 回転(反時計)', rx, gy + 40, '#ccddff', 12);
   label('SPC ハードドロップ', rx, gy + 60, '#ccddff', 12);
-  label('M   ' + (bgmMuted ? 'ミュート中' : 'BGM ON'), rx, gy + 80, bgmMuted ? '#ff6666' : '#88ffcc', 12);
+  label('P   ' + (paused ? '再開' : 'ポーズ'),         rx, gy + 80, paused ? '#ffe066' : '#ccddff', 12);
+  label('M   ' + (bgmMuted ? 'ミュート中' : 'BGM ON'), rx, gy + 100, bgmMuted ? '#ff6666' : '#88ffcc', 12);
 }
 
 function drawGameOver() {
@@ -433,6 +449,19 @@ document.addEventListener('keydown', e => {
   // M: ミュート切替
   if (e.code === 'KeyM') { toggleMute(); return; }
 
+  // P: ポーズ切替
+  if (e.code === 'KeyP' && (state === 'playing' || paused)) {
+    paused = !paused;
+    if (paused) {
+      if (audioCtx) audioCtx.suspend();
+    } else {
+      if (audioCtx) audioCtx.resume();
+    }
+    return;
+  }
+
+  if (paused) return;
+
   if (state === 'name_entry') {
     e.preventDefault();
     switch (e.code) {
@@ -494,7 +523,7 @@ function gameLoop(ts) {
   const dt = ts - lastTime;
   lastTime = ts;
 
-  if (state === 'playing') {
+  if (state === 'playing' && !paused) {
     dropTimer += dt;
     if (dropTimer >= dropInterval) {
       dropTimer = 0;
@@ -514,6 +543,7 @@ function startGame() {
   score = 0; level = 1; lines = 0;
   dropInterval = DROP_INTERVAL_TABLE[0]; dropTimer = 0;
   highlightRank = -1;
+  paused = false;
   state = 'playing';
   if (bgmStarted) startBGM();
 }
@@ -586,24 +616,33 @@ requestAnimationFrame(gameLoop);
   }
 
   heldBtn('tc-left', () => {
-    if (state === 'playing' && isValid(current.shape, current.x - 1, current.y)) current.x--;
+    if (state === 'playing' && !paused && isValid(current.shape, current.x - 1, current.y)) current.x--;
   });
   heldBtn('tc-right', () => {
-    if (state === 'playing' && isValid(current.shape, current.x + 1, current.y)) current.x++;
+    if (state === 'playing' && !paused && isValid(current.shape, current.x + 1, current.y)) current.x++;
   });
   heldBtn('tc-down', () => {
-    if (state !== 'playing') return;
+    if (state !== 'playing' || paused) return;
     if (isValid(current.shape, current.x, current.y + 1)) { current.y++; score++; }
     else lock();
   });
   tapBtn('tc-rotate', () => {
-    if (state !== 'playing') return;
+    if (state !== 'playing' || paused) return;
     const rotated = rotate(current.shape);
     if (isValid(rotated, current.x, current.y)) current.shape = rotated;
   });
   tapBtn('tc-drop', () => {
-    if (state !== 'playing') return;
+    if (state !== 'playing' || paused) return;
     while (isValid(current.shape, current.x, current.y + 1)) current.y++;
     lock();
+  });
+  tapBtn('tc-pause', () => {
+    if (state !== 'playing' && !paused) return;
+    paused = !paused;
+    if (paused) {
+      if (audioCtx) audioCtx.suspend();
+    } else {
+      if (audioCtx) audioCtx.resume();
+    }
   });
 })();

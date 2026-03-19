@@ -31,6 +31,7 @@ let paddle, balls, bricks, score, lives, state;
 let items = [], bricksDestroyed = 0, invincibleTimer = 0, speedMultiplier = 1;
 let notification = null; // { text, color, timer }
 let lastItemType = null; // 直前のアイテム種別（連続防止）
+let paused = false;
 
 // --- クリア演出 ---
 let confetti = [];
@@ -388,6 +389,7 @@ function initGame() {
   speedMultiplier = 1;
   lastItemType = null;
   notification = null;
+  paused = false;
   bricks = [];
   for (let r = 0; r < BRICK_ROWS; r++) {
     for (let c = 0; c < BRICK_COLS; c++) {
@@ -415,6 +417,11 @@ function initGame() {
 const keys = {};
 document.addEventListener('keydown', e => {
   keys[e.code] = true;
+  if (e.code === 'KeyP' && (state === 'playing' || paused)) {
+    paused = !paused;
+    return;
+  }
+  if (paused) return;
   if ((e.code === 'Space' || e.code === 'ArrowUp') && state === 'idle') launch();
 });
 document.addEventListener('keyup', e => { keys[e.code] = false; });
@@ -436,7 +443,8 @@ canvas.addEventListener('touchmove', e => {
 
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  if (state === 'idle') launch();
+  if (state === 'idle') { launch(); return; }
+  if (state === 'playing' || paused) paused = !paused;
 }, { passive: false });
 
 function launch() {
@@ -497,8 +505,8 @@ function roundRect(x, y, w, h, r) {
 // --- 更新 ---
 function update() {
   // パドル移動
-  if (keys['ArrowLeft'])  paddle.x = Math.max(0, paddle.x - PADDLE_SPEED);
-  if (keys['ArrowRight']) paddle.x = Math.min(W - paddle.w, paddle.x + PADDLE_SPEED);
+  if (!paused && keys['ArrowLeft'])  paddle.x = Math.max(0, paddle.x - PADDLE_SPEED);
+  if (!paused && keys['ArrowRight']) paddle.x = Math.min(W - paddle.w, paddle.x + PADDLE_SPEED);
 
   // 未発射ボールをパドルに乗せる
   for (const b of balls) {
@@ -612,9 +620,31 @@ function update() {
   }
 }
 
+function drawPause() {
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffe066';
+  ctx.font = 'bold 48px Arial, sans-serif';
+  ctx.shadowColor = '#ffe066';
+  ctx.shadowBlur = 20;
+  ctx.fillText('PAUSE', W / 2, H / 2 - 10);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#aaa';
+  ctx.font = '14px Arial, sans-serif';
+  ctx.fillText('P キー / タップで再開', W / 2, H / 2 + 22);
+  ctx.textAlign = 'left';
+}
+
 // --- ゲームループ ---
 let animId;
 function loop() {
+  if (paused) {
+    draw();
+    drawPause();
+    animId = requestAnimationFrame(loop);
+    return;
+  }
   if (state === 'clear') {
     updateCelebration();
   } else {
