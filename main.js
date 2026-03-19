@@ -4,6 +4,7 @@ const scoreEl = document.getElementById('score');
 const livesEl = document.getElementById('lives');
 const messageEl = document.getElementById('message');
 const restartBtn = document.getElementById('restart');
+const pauseBtn = document.getElementById('pause-btn');
 
 canvas.style.height = 'auto'; // CSS でアスペクト比を維持（スマホ対応）
 
@@ -411,6 +412,7 @@ function initGame() {
   livesEl.textContent = lives;
   messageEl.textContent = 'タップ / クリック / SPACE でスタート';
   restartBtn.style.display = 'none';
+  pauseBtn.style.display = 'none';
 }
 
 // --- 入力 ---
@@ -427,6 +429,11 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keyup', e => { keys[e.code] = false; });
 canvas.addEventListener('click', () => { if (state === 'idle') launch(); });
 restartBtn.addEventListener('click', () => { initGame(); loop(); });
+pauseBtn.addEventListener('click', () => {
+  if (state !== 'playing' && !paused) return;
+  paused = !paused;
+  pauseBtn.textContent = paused ? '▶ 再開' : '⏸ ポーズ';
+});
 
 canvas.addEventListener('mousemove', e => {
   const rect = canvas.getBoundingClientRect();
@@ -443,14 +450,15 @@ canvas.addEventListener('touchmove', e => {
 
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  if (state === 'idle') { launch(); return; }
-  if (state === 'playing' || paused) paused = !paused;
+  if (state === 'idle') launch();
 }, { passive: false });
 
 function launch() {
   for (const b of balls) b.launched = true;
   state = 'playing';
   messageEl.textContent = '';
+  pauseBtn.style.display = 'inline-block';
+  pauseBtn.textContent = '⏸ ポーズ';
 }
 
 // --- 描画 ---
@@ -603,6 +611,7 @@ function update() {
       state = 'gameover';
       messageEl.textContent = 'ゲームオーバー';
       restartBtn.style.display = 'inline-block';
+      pauseBtn.style.display = 'none';
     } else {
       balls = [createServeBall()];
       state = 'idle';
@@ -617,6 +626,7 @@ function update() {
     startClear();
     messageEl.textContent = '';
     restartBtn.style.display = 'inline-block';
+    pauseBtn.style.display = 'none';
   }
 }
 

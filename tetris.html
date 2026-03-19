@@ -52,10 +52,25 @@
     }
     .ctrl-btn:active { background: #1a3a5a; }
     .ctrl-btn.wide { width: 150px; }
+    #pause-btn {
+      margin-top: 10px;
+      padding: 8px 32px;
+      background: #0d1b2a;
+      color: #aaddff;
+      border: 1px solid #4488cc;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      touch-action: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #pause-btn:active { background: #1a3a5a; }
   </style>
 </head>
 <body>
   <canvas id="canvas" width="640" height="448"></canvas>
+  <button id="pause-btn">⏸ ポーズ</button>
   <div id="touch-controls">
     <div class="ctrl-row">
       <button class="ctrl-btn" id="tc-left">←</button>
@@ -65,7 +80,6 @@
     <div class="ctrl-row">
       <button class="ctrl-btn" id="tc-down">↓</button>
       <button class="ctrl-btn wide" id="tc-drop">▼▼ HD</button>
-      <button class="ctrl-btn" id="tc-pause">⏸</button>
     </div>
   </div>
   <a href="index.html" style="margin-top:12px;color:#444;font:13px sans-serif;text-decoration:none;" onmouseover="this.style.color='#aaa'" onmouseout="this.style.color='#444'">← ゲーム選択に戻る</a>

@@ -544,6 +544,8 @@ function startGame() {
   dropInterval = DROP_INTERVAL_TABLE[0]; dropTimer = 0;
   highlightRank = -1;
   paused = false;
+  const pb = document.getElementById('pause-btn');
+  if (pb) pb.textContent = '⏸ ポーズ';
   state = 'playing';
   if (bgmStarted) startBGM();
 }
@@ -636,9 +638,23 @@ requestAnimationFrame(gameLoop);
     while (isValid(current.shape, current.x, current.y + 1)) current.y++;
     lock();
   });
-  tapBtn('tc-pause', () => {
+  // 共通ポーズボタン
+  const pauseBtnEl = document.getElementById('pause-btn');
+  pauseBtnEl.addEventListener('touchstart', e => {
+    e.preventDefault();
     if (state !== 'playing' && !paused) return;
     paused = !paused;
+    pauseBtnEl.textContent = paused ? '▶ 再開' : '⏸ ポーズ';
+    if (paused) {
+      if (audioCtx) audioCtx.suspend();
+    } else {
+      if (audioCtx) audioCtx.resume();
+    }
+  }, { passive: false });
+  pauseBtnEl.addEventListener('click', () => {
+    if (state !== 'playing' && !paused) return;
+    paused = !paused;
+    pauseBtnEl.textContent = paused ? '▶ 再開' : '⏸ ポーズ';
     if (paused) {
       if (audioCtx) audioCtx.suspend();
     } else {
