@@ -252,9 +252,9 @@ function chooseAICol(ai) {
     return c;
   }
 
-  // veryhard: depth 15 + 置換表
+  // veryhard: depth 9 + 置換表
   const h = computeHash(copy);
-  const { c } = minimaxTT(copy, 15, -Infinity, Infinity, true, ai, h);
+  const { c } = minimaxTT(copy, 9, -Infinity, Infinity, true, ai, h);
   return c;
 }
 
@@ -358,13 +358,14 @@ const DIFF_LEVELS = [
   { key: 'hard',     label: 'むずかしい',         color: '#e94560',
     desc: '5手先読み。手ごたえあり。' },
   { key: 'veryhard', label: 'とてもむずかしい',   color: '#cc44ff',
-    desc: '15手先読み＋置換表。強敵。' },
+    desc: '9手先読み＋置換表。強敵。' },
 ];
 
-// 難易度ボタン配置 (4 in a row)
-// W=546: margin=26, btn_w=116, gap=10 → centers at 84,210,336,462
-const DIFF_BTN_W  = 116, DIFF_BTN_H = 40, DIFF_BTN_Y = 128;
-const DIFF_BTN_XS = [84, 210, 336, 462];
+// 難易度ボタン配置 (2列×2行)
+// W=546: btn_w=240, gap=14 → left center=146, right center=400
+const DIFF_BTN_W  = 240, DIFF_BTN_H = 40;
+const DIFF_BTN_XS = [146, 400, 146, 400];  // [0]=かんたん [1]=ふつう [2]=むずかしい [3]=とてもむずかしい
+const DIFF_BTN_YS = [118, 118, 164, 164];
 
 // ── 画面描画 ──────────────────────────────────────
 function drawSelect() {
@@ -395,26 +396,26 @@ function drawCpuSetup() {
 
   for (let i = 0; i < DIFF_LEVELS.length; i++) {
     const d = DIFF_LEVELS[i];
-    btn(DIFF_BTN_XS[i], DIFF_BTN_Y, DIFF_BTN_W, DIFF_BTN_H, d.label, d.color, difficulty === d.key);
+    btn(DIFF_BTN_XS[i], DIFF_BTN_YS[i], DIFF_BTN_W, DIFF_BTN_H, d.label, d.color, difficulty === d.key);
   }
 
   const sel = DIFF_LEVELS.find(d => d.key === difficulty);
   ctx.fillStyle = sel.color + 'bb'; ctx.font = '12px Arial, sans-serif';
-  ctx.fillText(sel.desc, W/2, 168);
+  ctx.fillText(sel.desc, W/2, 198);
 
   // ── 先行・後攻 ──
   ctx.fillStyle = '#aaddff'; ctx.font = 'bold 12px Arial, sans-serif';
-  ctx.fillText('先行・後攻', W/2, 212);
+  ctx.fillText('先行・後攻', W/2, 240);
 
-  circle(W/2 - 98, 265, 18, COL_P1);
+  circle(W/2 - 98, 293, 18, COL_P1);
   ctx.fillStyle = '#aaa'; ctx.font = '11px Arial, sans-serif';
-  ctx.fillText('あなた = 赤（先行）', W/2, 300);
-  btn(W/2, 334, 210, 48, '先行でプレイ', COL_P1, false);
+  ctx.fillText('あなた = 赤（先行）', W/2, 328);
+  btn(W/2, 362, 210, 48, '先行でプレイ', COL_P1, false);
 
-  circle(W/2 + 98, 265, 18, COL_P2);
+  circle(W/2 + 98, 293, 18, COL_P2);
   ctx.fillStyle = '#aaa';
-  ctx.fillText('あなた = 黄（後攻）', W/2, 404);
-  btn(W/2, 438, 210, 48, '後攻でプレイ', COL_P2, false);
+  ctx.fillText('あなた = 黄（後攻）', W/2, 432);
+  btn(W/2, 466, 210, 48, '後攻でプレイ', COL_P2, false);
 
   ctx.textAlign = 'left';
 }
@@ -427,7 +428,7 @@ function drawGame() {
     statusText  = winCells ? `${pLabel(player)} の勝ち！` : '引き分け';
     statusColor = winCells ? pColor(player) : '#aaaaaa';
   } else if (aiPending) {
-    statusText  = difficulty === 'veryhard' ? 'CPU 思考中... (depth 15)' : 'CPU 思考中...';
+    statusText  = difficulty === 'veryhard' ? 'CPU 思考中... (depth 9)' : 'CPU 思考中...';
     statusColor = pColor(player);
   } else {
     statusText  = `${pLabel(player)} のターン`;
@@ -446,13 +447,13 @@ function drawGame() {
     if (vsAI) {
       const dl = DIFF_LEVELS.find(d => d.key === difficulty);
       ctx.fillStyle = dl.color + 'aa'; ctx.font = '11px Arial, sans-serif';
-      ctx.fillText(dl.label, W/2 + 60, 27);
+      ctx.fillText(dl.label, 54, 27);
     }
   }
 
   // ── 待ったボタン ──
   {
-    const active = undosLeft > 0 && undoStack.length > 0 && !aiPending;
+    const active = undosLeft > 0 && undoStack.length > 0 && !aiPending && (phase === 'playing' || phase === 'over');
     const bx = W - 102, by = 6, bw = 96, bh = 26;
     ctx.fillStyle = active ? '#0d2a1a' : '#151515';
     ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.fill();
@@ -615,16 +616,16 @@ canvas.addEventListener('click', e => {
   }
   if (phase === 'cpu_setup') {
     for (let i = 0; i < DIFF_LEVELS.length; i++) {
-      if (hit(e, DIFF_BTN_XS[i], DIFF_BTN_Y, DIFF_BTN_W, DIFF_BTN_H)) {
+      if (hit(e, DIFF_BTN_XS[i], DIFF_BTN_YS[i], DIFF_BTN_W, DIFF_BTN_H)) {
         difficulty = DIFF_LEVELS[i].key; return;
       }
     }
-    if (hit(e, W/2, 334, 210, 48)) { newGame(true, 1); return; }
-    if (hit(e, W/2, 438, 210, 48)) { newGame(true, 2); return; }
+    if (hit(e, W/2, 362, 210, 48)) { newGame(true, 1); return; }
+    if (hit(e, W/2, 466, 210, 48)) { newGame(true, 2); return; }
     return;
   }
+  if ((phase === 'playing' || phase === 'over') && hit(e, W - 102 + 48, 6 + 13, 96, 26)) { undo(); return; }
   if (phase === 'over') { phase = 'select'; return; }
-  if (phase === 'playing' && hit(e, W - 102 + 48, 6 + 13, 96, 26)) { undo(); return; }
   if (aiPending || fallingPiece || (vsAI && player !== humanPlayer)) return;
   const { x } = getCanvasXY(e);
   playCol(Math.floor(x / CELL));
@@ -689,11 +690,12 @@ function updateFall() {
 
 // ── 待った ────────────────────────────────────────
 function undo() {
-  if (undosLeft <= 0 || undoStack.length === 0 || phase !== 'playing' || aiPending || fallingPiece) return;
+  if (undosLeft <= 0 || undoStack.length === 0 || (phase !== 'playing' && phase !== 'over') || aiPending || fallingPiece) return;
   const snap = undoStack.pop();
   board = snap.board;
   player = snap.player;
   winCells = null;
+  phase = 'playing';
   undosLeft--;
   evalPosition();
 }
