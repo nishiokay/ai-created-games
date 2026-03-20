@@ -59,6 +59,7 @@ function insertHighScore(name, s) {
 
 // --- 状態 ---
 let board, current, next, score, level, lines, state, dropTimer, dropInterval;
+// state: 'title' | 'playing' | 'name_entry' | 'gameover'
 let nameChars, nameCursor, highlightRank;
 let paused = false;
 
@@ -150,6 +151,13 @@ function stopBGM() {
   if (audioCtx) { audioCtx.close(); audioCtx = null; masterGain = null; }
 }
 
+function tryStartBGM() {
+  if (!bgmStarted) {
+    bgmStarted = true;
+    if (state === 'playing') startBGM();
+  }
+}
+
 function toggleMute() {
   bgmMuted = !bgmMuted;
   if (masterGain) masterGain.gain.value = bgmMuted ? 0 : 0.12;
@@ -159,8 +167,18 @@ function createBoard() {
   return Array.from({ length: ROWS }, () => Array(COLS).fill(0));
 }
 
+// 7-bag ランダマイザー: 7種を1セットでシャッフルして順番に配る
+let pieceBag = [];
+function refillBag() {
+  pieceBag = [...Array(PIECES.length).keys()]; // [0,1,2,3,4,5,6]
+  for (let i = pieceBag.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pieceBag[i], pieceBag[j]] = [pieceBag[j], pieceBag[i]];
+  }
+}
 function randomPiece() {
-  const p = PIECES[Math.floor(Math.random() * PIECES.length)];
+  if (pieceBag.length === 0) refillBag();
+  const p = PIECES[pieceBag.pop()];
   return {
     shape: p.shape.map(r => [...r]),
     color: p.color,
@@ -270,7 +288,30 @@ function draw() {
 
   if (state === 'gameover') drawGameOver();
   if (state === 'name_entry') drawNameEntry();
+  if (state === 'title') drawTitle();
   if (paused) drawPause();
+}
+
+function drawTitle() {
+  ctx.fillStyle = 'rgba(0,0,0,0.78)';
+  ctx.fillRect(FX - 2, FY - 2, COLS * BLOCK + 4, ROWS * BLOCK + 4);
+  const cx = FX + COLS * BLOCK / 2;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#00e5ff';
+  ctx.font = 'bold 28px Arial, sans-serif';
+  ctx.shadowColor = '#00e5ff';
+  ctx.shadowBlur = 16;
+  ctx.fillText('TETRIS', cx, FY + ROWS * BLOCK / 2 - 30);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#ffe066';
+  ctx.font = 'bold 14px Arial, sans-serif';
+  const t = Math.floor(Date.now() / 600) % 2 === 0;
+  if (t) ctx.fillText('タップ / キーを押してスタート', cx, FY + ROWS * BLOCK / 2 + 4);
+  ctx.fillStyle = '#6688aa';
+  ctx.font = '12px Arial, sans-serif';
+  ctx.fillText('M: BGM切替  P: ポーズ', cx, FY + ROWS * BLOCK / 2 + 30);
+  ctx.textAlign = 'left';
+  ctx.shadowBlur = 0;
 }
 
 function drawPause() {
@@ -440,14 +481,12 @@ function drawNameEntry() {
 
 // --- 入力 ---
 document.addEventListener('keydown', e => {
-  // ブラウザのオートプレイ制限: 初回キー操作でBGM開始
-  if (!bgmStarted) {
-    bgmStarted = true;
-    if (state === 'playing') startBGM();
-  }
+  tryStartBGM();
 
   // M: ミュート切替
   if (e.code === 'KeyM') { toggleMute(); return; }
+
+  if (state === 'title') { startGame(); return; }
 
   // P: ポーズ切替
   if (e.code === 'KeyP' && (state === 'playing' || paused)) {
@@ -538,6 +577,7 @@ function gameLoop(ts) {
 
 function startGame() {
   board = createBoard();
+  pieceBag = [];
   current = randomPiece();
   next = randomPiece();
   score = 0; level = 1; lines = 0;
@@ -550,7 +590,15 @@ function startGame() {
   if (bgmStarted) startBGM();
 }
 
-startGame();
+// タイトル画面から開始
+board = createBoard();
+pieceBag = [];
+current = randomPiece();
+next = randomPiece();
+score = 0; level = 1; lines = 0;
+dropInterval = DROP_INTERVAL_TABLE[0]; dropTimer = 0;
+highlightRank = -1;
+state = 'title';
 lastTime = performance.now();
 requestAnimationFrame(gameLoop);
 
@@ -568,11 +616,8 @@ requestAnimationFrame(gameLoop);
     e.preventDefault();
     touchX0 = e.touches[0].clientX;
     touchY0 = e.touches[0].clientY;
-    if (!bgmStarted) {
-      bgmStarted = true;
-      if (state === 'playing') startBGM();
-    }
-    if (state === 'gameover') startGame();
+    tryStartBGM();
+    if (state === 'title' || state === 'gameover') startGame();
   }, { passive: false });
 
   canvas.addEventListener('touchend', e => {
@@ -604,6 +649,7 @@ requestAnimationFrame(gameLoop);
     let iv = null;
     el.addEventListener('touchstart', e => {
       e.preventDefault();
+      tryStartBGM();
       action();
       iv = setInterval(action, 80);
     }, { passive: false });
@@ -614,7 +660,7 @@ requestAnimationFrame(gameLoop);
   function tapBtn(id, action) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener('touchstart', e => { e.preventDefault(); action(); }, { passive: false });
+    el.addEventListener('touchstart', e => { e.preventDefault(); tryStartBGM(); action(); }, { passive: false });
   }
 
   heldBtn('tc-left', () => {
