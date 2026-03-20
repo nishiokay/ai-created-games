@@ -21,6 +21,18 @@ const BRICK_OFFSET_X = (W - (BRICK_COLS * (BRICK_W + BRICK_PAD) - BRICK_PAD)) / 
 const BRICK_OFFSET_Y = 40;
 const BRICK_COLORS = ['#e94560', '#f5a623', '#f8e71c', '#7ed321', '#4a90e2'];
 
+// ステージ設定
+const STAGES = [
+  { rows: 5, speedMult: 1.0,  hardRows: [] },
+  { rows: 7, speedMult: 1.15, hardRows: [] },
+  { rows: 8, speedMult: 1.3,  hardRows: [0, 1] },
+];
+const STAGE_COLORS = [
+  ['#e94560','#f5a623','#f8e71c','#7ed321','#4a90e2'],
+  ['#ff4081','#ff9800','#ffeb3b','#43a047','#039be5','#ab47bc','#26c6da'],
+  ['#778899','#778899','#e53935','#fb8c00','#fdd835','#43a047','#039be5','#8e24aa'],
+];
+
 const ITEM_W = 36, ITEM_H = 20, ITEM_FALL = 2;
 const INVINCIBLE_DURATION = 300; // 5 秒 @ 60fps
 const ITEM_COLORS  = { multiball: '#4a90e2', speed: '#f5a623', invincible: '#00e5ff' };
@@ -33,6 +45,7 @@ let items = [], bricksDestroyed = 0, invincibleTimer = 0, speedMultiplier = 1;
 let notification = null; // { text, color, timer }
 let lastItemType = null; // 直前のアイテム種別（連続防止）
 let paused = false;
+let stage = 1, stageClearTimer = 0;
 
 // --- クリア演出 ---
 let confetti = [];
@@ -234,7 +247,7 @@ function applyItem(type) {
   if (type === 'multiball') {
     // 生きているボールの最初のものを基準に4球追加
     const ref = balls.find(b => b.launched) || balls[0];
-    const speed = BALL_SPEED * speedMultiplier;
+    const speed = BALL_SPEED * STAGES[stage - 1].speedMult * speedMultiplier;
     const angles = [-60, -30, 30, 60]; // 度
     for (const deg of angles) {
       const rad = deg * Math.PI / 180;
@@ -372,13 +385,51 @@ function drawNotification() {
 
 // --- ゲーム初期化 ---
 function createServeBall() {
+  const spd = BALL_SPEED * STAGES[stage - 1].speedMult;
   return {
     x: paddle.x + paddle.w / 2,
     y: paddle.y - BALL_R,
-    vx: BALL_SPEED * (Math.random() < 0.5 ? 1 : -1),
-    vy: -BALL_SPEED,
+    vx: spd * (Math.random() < 0.5 ? 1 : -1),
+    vy: -spd,
     launched: false
   };
+}
+
+function buildBricks(s) {
+  const cfg = STAGES[s - 1];
+  const colors = STAGE_COLORS[s - 1];
+  bricks = [];
+  for (let r = 0; r < cfg.rows; r++) {
+    const isHard = cfg.hardRows.includes(r);
+    for (let c = 0; c < BRICK_COLS; c++) {
+      bricks.push({
+        x: BRICK_OFFSET_X + c * (BRICK_W + BRICK_PAD),
+        y: BRICK_OFFSET_Y + r * (BRICK_H + BRICK_PAD),
+        w: BRICK_W, h: BRICK_H,
+        color: isHard ? '#778899' : colors[r],
+        damagedColor: isHard ? '#c0392b' : null,
+        hp: isHard ? 2 : 1,
+        maxHp: isHard ? 2 : 1,
+        alive: true,
+      });
+    }
+  }
+}
+
+function startStage() {
+  buildBricks(stage);
+  bricksDestroyed = 0;
+  speedMultiplier = 1;
+  invincibleTimer = 0;
+  items = [];
+  lastItemType = null;
+  notification = null;
+  paused = false;
+  paddle = { x: W / 2 - PADDLE_W / 2, y: H - 30, w: PADDLE_W, h: PADDLE_H, dx: 0 };
+  balls = [createServeBall()];
+  state = 'idle';
+  pauseBtn.textContent = '⏸ ポーズ';
+  messageEl.textContent = `STAGE ${stage} − タップ / クリック / SPACE でスタート`;
 }
 
 function initGame() {
@@ -391,18 +442,8 @@ function initGame() {
   lastItemType = null;
   notification = null;
   paused = false;
-  bricks = [];
-  for (let r = 0; r < BRICK_ROWS; r++) {
-    for (let c = 0; c < BRICK_COLS; c++) {
-      bricks.push({
-        x: BRICK_OFFSET_X + c * (BRICK_W + BRICK_PAD),
-        y: BRICK_OFFSET_Y + r * (BRICK_H + BRICK_PAD),
-        w: BRICK_W, h: BRICK_H,
-        color: BRICK_COLORS[r],
-        alive: true
-      });
-    }
-  }
+  stage = 1;
+  buildBricks(1);
   score = 0;
   lives = 3;
   state = 'idle';
@@ -469,6 +510,11 @@ function draw() {
     return;
   }
 
+  if (state === 'stageclear') {
+    drawStageClear();
+    return;
+  }
+
   // パドル
   ctx.fillStyle = '#e94560';
   roundRect(paddle.x, paddle.y, paddle.w, paddle.h, 5);
@@ -489,6 +535,15 @@ function draw() {
     ctx.shadowBlur = 0;
   }
 
+  // ステージ番号
+  ctx.fillStyle = '#556';
+  ctx.font = 'bold 11px Arial';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`STAGE ${stage}/3`, W - 4, 4);
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+
   // ブロック
   for (const b of bricks) {
     if (!b.alive) continue;
@@ -496,6 +551,14 @@ function draw() {
     roundRect(b.x, b.y, b.w, b.h, 3);
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.fillRect(b.x + 2, b.y + 2, b.w - 4, 4);
+    // 装甲ブロック: 右下にXマーク
+    if (b.maxHp > 1) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 1.2;
+      const mx = b.x + b.w - 10, my = b.y + 3, ms = 7;
+      ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx + ms, my + ms); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(mx + ms, my); ctx.lineTo(mx, my + ms); ctx.stroke();
+    }
   }
 
   drawItems();
@@ -549,7 +612,7 @@ function update() {
     ) {
       b.y = paddle.y - BALL_R;
       const hit = (b.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
-      const speed = BALL_SPEED * speedMultiplier;
+      const speed = BALL_SPEED * STAGES[stage - 1].speedMult * speedMultiplier;
       b.vx = speed * hit * 1.5;
       b.vy = -Math.sqrt(speed * speed * 2.25 - b.vx * b.vx) || -speed;
       continue;
@@ -568,14 +631,25 @@ function update() {
         b.x + BALL_R > br.x && b.x - BALL_R < br.x + br.w &&
         b.y + BALL_R > br.y && b.y - BALL_R < br.y + br.h
       ) {
-        br.alive = false;
-        score += 10;
-        scoreEl.textContent = score;
-        bricksDestroyed++;
-        if (bricksDestroyed % 20 === 0) spawnItem(br.x, br.y);
         if (invincibleTimer > 0) {
           // 無敵: ブロックを壊すが反射しない（連続破壊）
+          br.alive = false;
+          score += 10;
+          scoreEl.textContent = score;
+          bricksDestroyed++;
+          if (bricksDestroyed % 20 === 0) spawnItem(br.x, br.y);
           break;
+        }
+        // HP 処理
+        br.hp--;
+        if (br.hp <= 0) {
+          br.alive = false;
+          score += 10;
+          scoreEl.textContent = score;
+          bricksDestroyed++;
+          if (bricksDestroyed % 20 === 0) spawnItem(br.x, br.y);
+        } else if (br.damagedColor) {
+          br.color = br.damagedColor;
         }
         // 衝突面判定 + 押し出し
         const overlapLeft  = (b.x + BALL_R) - br.x;
@@ -586,10 +660,10 @@ function update() {
         const minV = Math.min(overlapTop, overlapBot);
         if (minH < minV) {
           b.vx *= -1;
-          b.x += overlapLeft < overlapRight ? -overlapLeft : overlapRight;
+          b.x += b.vx > 0 ? overlapRight : -overlapLeft;
         } else {
           b.vy *= -1;
-          b.y += overlapTop < overlapBot ? -overlapTop : overlapBot;
+          b.y += b.vy > 0 ? overlapBot : -overlapTop;
         }
         break;
       }
@@ -620,11 +694,39 @@ function update() {
 
   // クリア判定
   if (bricks.every(b => !b.alive)) {
-    state = 'clear';
-    startClear();
-    messageEl.textContent = '';
-    restartBtn.style.display = 'inline-block';
+    if (stage < 3) {
+      state = 'stageclear';
+      stageClearTimer = 150;
+      messageEl.textContent = '';
+    } else {
+      state = 'clear';
+      startClear();
+      messageEl.textContent = '';
+      restartBtn.style.display = 'inline-block';
+    }
   }
+}
+
+function drawStageClear() {
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.fillRect(0, 0, W, H);
+  const alpha = Math.min(1, (1 - stageClearTimer / 150) * 4);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#ffe066';
+  ctx.shadowBlur = 28;
+  ctx.fillStyle = '#ffe066';
+  ctx.font = 'bold 44px Arial, sans-serif';
+  ctx.fillText(`STAGE ${stage} CLEAR!`, W / 2, H / 2 - 16);
+  ctx.shadowColor = '#00e5ff';
+  ctx.shadowBlur = 16;
+  ctx.fillStyle = '#00e5ff';
+  ctx.font = 'bold 22px Arial, sans-serif';
+  ctx.fillText(`STAGE ${stage + 1} スタート`, W / 2, H / 2 + 22);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  ctx.textAlign = 'left';
 }
 
 function drawPause() {
@@ -654,6 +756,12 @@ function loop() {
   }
   if (state === 'clear') {
     updateCelebration();
+  } else if (state === 'stageclear') {
+    stageClearTimer--;
+    if (stageClearTimer <= 0) {
+      stage++;
+      startStage();
+    }
   } else {
     update();
   }
