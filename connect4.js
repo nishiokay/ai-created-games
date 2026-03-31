@@ -454,16 +454,18 @@ function drawGame() {
   // ── 待ったボタン ──
   {
     const active = undosLeft > 0 && undoStack.length > 0 && !aiPending && (phase === 'playing' || phase === 'over');
-    const bx = W - 102, by = 6, bw = 96, bh = 26;
+    const bx = W - 108, by = 4, bw = 104, bh = 40;
     ctx.fillStyle = active ? '#0d2a1a' : '#151515';
-    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 8); ctx.fill();
     ctx.strokeStyle = active ? '#44dd88' : '#2a3a2a';
     ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.stroke();
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 8); ctx.stroke();
     ctx.fillStyle = active ? '#88ffaa' : '#3a5a3a';
     ctx.textAlign = 'center';
-    ctx.font = 'bold 13px Arial, sans-serif';
-    ctx.fillText(`↩ 待った (${undosLeft})`, bx + bw / 2, by + bh - 7);
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 14px Arial, sans-serif';
+    ctx.fillText(`↩ 待った (${undosLeft})`, bx + bw / 2, by + bh / 2);
+    ctx.textBaseline = 'alphabetic';
     ctx.lineWidth = 1;
   }
 
@@ -624,7 +626,7 @@ canvas.addEventListener('click', e => {
     if (hit(e, W/2, 466, 210, 48)) { newGame(true, 2); return; }
     return;
   }
-  if ((phase === 'playing' || phase === 'over') && hit(e, W - 102 + 48, 6 + 13, 96, 26)) { undo(); return; }
+  if ((phase === 'playing' || phase === 'over') && hit(e, W - 108 + 52, 4 + 20, 104, 40)) { undo(); return; }
   if (phase === 'over') { phase = 'select'; return; }
   if (aiPending || fallingPiece || (vsAI && player !== humanPlayer)) return;
   const { x } = getCanvasXY(e);
