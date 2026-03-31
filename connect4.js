@@ -423,26 +423,44 @@ function drawCpuSetup() {
 function drawGame() {
   ctx.fillStyle = COL_BG; ctx.fillRect(0, 0, W, H);
 
-  let statusText, statusColor;
   if (phase === 'over') {
-    statusText  = winCells ? `${pLabel(player)} の勝ち！` : '引き分け';
-    statusColor = winCells ? pColor(player) : '#aaaaaa';
-  } else if (aiPending) {
-    statusText  = difficulty === 'veryhard' ? 'CPU 思考中... (depth 9)' : 'CPU 思考中...';
-    statusColor = pColor(player);
+    // ── 上部結果バナー ──
+    const resultColor = winCells ? pColor(player) : '#8899aa';
+    const resultText  = winCells ? `${pLabel(player)} の勝ち！` : '引き分け';
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = resultColor;
+    ctx.fillRect(0, 0, W, TOP - 1);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = resultColor + '99';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, TOP - 1); ctx.lineTo(W, TOP - 1); ctx.stroke();
+    ctx.lineWidth = 1;
+    if (winCells) {
+      ctx.save(); ctx.shadowColor = resultColor; ctx.shadowBlur = 20;
+      circle(32, TOP / 2, 15, resultColor);
+      ctx.restore();
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = resultColor;
+    ctx.shadowColor = resultColor; ctx.shadowBlur = 12;
+    ctx.font = 'bold 26px Arial, sans-serif';
+    ctx.fillText(resultText, W / 2, 33);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#556677'; ctx.font = '12px Arial, sans-serif';
+    ctx.fillText('タップ / クリック / R キーでリスタート', W / 2, 58);
   } else {
-    statusText  = `${pLabel(player)} のターン`;
-    statusColor = pColor(player);
-  }
-
-  ctx.textAlign = 'center';
-  ctx.fillStyle = statusColor;
-  ctx.font = 'bold 20px Arial, sans-serif';
-  ctx.fillText(statusText, W/2, 30);
-
-  if (phase === 'over') {
-    // 上部は勝敗テキストのみ（詳細はオーバーレイに表示）
-  } else {
+    let statusText, statusColor;
+    if (aiPending) {
+      statusText  = difficulty === 'veryhard' ? 'CPU 思考中... (depth 9)' : 'CPU 思考中...';
+      statusColor = pColor(player);
+    } else {
+      statusText  = `${pLabel(player)} のターン`;
+      statusColor = pColor(player);
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = statusColor;
+    ctx.font = 'bold 20px Arial, sans-serif';
+    ctx.fillText(statusText, W/2, 30);
     circle(W/2 - 82, 22, 9, pColor(player));
     if (vsAI) {
       const dl = DIFF_LEVELS.find(d => d.key === difficulty);
@@ -470,7 +488,7 @@ function drawGame() {
   }
 
   // ── 局面評価バー ──
-  {
+  if (phase !== 'over') {
     const BAR_W = 260, BAR_H = 9;
     const bx = W/2 - BAR_W/2, by = 50;
     const norm = normalizeEval(posScore);
@@ -509,7 +527,7 @@ function drawGame() {
     ctx.textAlign = 'center';
     ctx.font = 'bold 11px Arial, sans-serif';
     ctx.fillText(labelStr, W/2, by + BAR_H + 13);
-  }
+  } // end if (phase !== 'over')
 
   ctx.fillStyle = COL_BOARD;
   ctx.fillRect(0, TOP, W, ROWS * CELL);
@@ -529,11 +547,21 @@ function drawGame() {
   }
 
   const winSet = winCells ? new Set(winCells.map(([r,c]) => `${r},${c}`)) : null;
+  const winPulse = winSet ? Math.sin(Date.now() * 0.005) * 0.35 + 0.65 : 0;
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const x = colX(c), y = cellY(r), cell = board[r][c];
       const isWin = winSet && winSet.has(`${r},${c}`);
       circle(x, y, CELL/2-6, cell ? pColor(cell) : COL_EMPTY, isWin ? pColor(cell) : null);
+      if (isWin) {
+        ctx.save();
+        ctx.strokeStyle = `rgba(255,255,255,${winPulse})`;
+        ctx.lineWidth = 3.5;
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur = 16;
+        ctx.beginPath(); ctx.arc(x, y, CELL/2 - 4, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
     }
   }
 
@@ -548,50 +576,6 @@ function drawGame() {
       pColor(fallingPiece.player), pColor(fallingPiece.player));
   }
 
-  // ── ゲームオーバーオーバーレイ ──
-  if (phase === 'over') {
-    const cx = W / 2, cy = TOP + ROWS * CELL / 2;
-
-    // 背景パネル
-    ctx.fillStyle = 'rgba(5, 15, 30, 0.82)';
-    ctx.beginPath(); ctx.roundRect(cx - 140, cy - 72, 280, 144, 14); ctx.fill();
-
-    if (winCells) {
-      const col = pColor(player);
-      // 勝者の色でボーダー
-      ctx.strokeStyle = col; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.roundRect(cx - 140, cy - 72, 280, 144, 14); ctx.stroke();
-
-      // コマアイコン
-      ctx.save();
-      ctx.shadowColor = col; ctx.shadowBlur = 20;
-      circle(cx, cy - 38, 20, col);
-      ctx.restore();
-
-      // 勝者ラベル
-      ctx.textAlign = 'center';
-      ctx.fillStyle = col;
-      ctx.font = 'bold 28px Arial, sans-serif';
-      ctx.fillText(`${pLabel(player)} の勝ち！`, cx, cy + 10);
-
-      // サブテキスト
-      ctx.fillStyle = '#6688aa'; ctx.font = '13px Arial, sans-serif';
-      ctx.fillText('タップ / クリック / R キーでリスタート', cx, cy + 40);
-    } else {
-      // 引き分け
-      ctx.strokeStyle = '#556677'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.roundRect(cx - 140, cy - 72, 280, 144, 14); ctx.stroke();
-
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#aaaaaa';
-      ctx.font = 'bold 28px Arial, sans-serif';
-      ctx.fillText('引き分け', cx, cy + 10);
-
-      ctx.fillStyle = '#556677'; ctx.font = '13px Arial, sans-serif';
-      ctx.fillText('タップ / クリック / R キーでリスタート', cx, cy + 40);
-    }
-    ctx.lineWidth = 1;
-  }
 
   ctx.textAlign = 'left';
 }
