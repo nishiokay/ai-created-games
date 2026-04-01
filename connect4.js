@@ -253,8 +253,25 @@ function chooseAICol(ai) {
   }
 
   // veryhard: depth 9 + 置換表
+  if (difficulty === 'veryhard') {
+    const h = computeHash(copy);
+    const { c } = minimaxTT(copy, 9, -Infinity, Infinity, true, ai, h);
+    return c;
+  }
+
+  // kiwami: depth 15 + 置換表
+  // 序盤の空に近い盤面はハードコードで高速化（ブラウザフリーズ回避）
+  const pieces = copy.flat().filter(x => x !== 0).length;
+  if (pieces === 0) return 3; // 先攻初手: 中央固定
+  if (pieces === 1) {
+    // 後攻初手: 中央が空なら中央、取られていれば depth9 で安全に対応
+    if (valid.includes(3)) return 3;
+    const h9 = computeHash(copy);
+    const { c: c9 } = minimaxTT(copy, 9, -Infinity, Infinity, true, ai, h9);
+    return c9;
+  }
   const h = computeHash(copy);
-  const { c } = minimaxTT(copy, 9, -Infinity, Infinity, true, ai, h);
+  const { c } = minimaxTT(copy, 12, -Infinity, Infinity, true, ai, h);
   return c;
 }
 
@@ -262,7 +279,7 @@ function triggerAI() {
   aiPending = true;
   const ai = 3 - humanPlayer;
   // veryhard は時間がかかるので少し間を置いて描画を先に確定させる
-  const delay = difficulty === 'veryhard' ? 50 : (difficulty === 'easy' ? 300 : 80);
+  const delay = (difficulty === 'veryhard' || difficulty === 'kiwami') ? 50 : (difficulty === 'easy' ? 300 : 80);
   setTimeout(() => {
     const col = chooseAICol(ai);
     aiPending = false;
@@ -359,13 +376,15 @@ const DIFF_LEVELS = [
     desc: '5手先読み。手ごたえあり。' },
   { key: 'veryhard', label: 'とてもむずかしい',   color: '#cc44ff',
     desc: '9手先読み＋置換表。強敵。' },
+  { key: 'kiwami',   label: '極',                 color: '#ff6600',
+    desc: '12手先読み＋置換表。最強。CPUの思考時間長め。' },
 ];
 
-// 難易度ボタン配置 (2列×2行)
-// W=546: btn_w=240, gap=14 → left center=146, right center=400
+// 難易度ボタン配置 (2列×2行 + 中央1つ)
+// W=546: btn_w=240, gap=14 → left center=146, right center=400, mid center=273
 const DIFF_BTN_W  = 240, DIFF_BTN_H = 40;
-const DIFF_BTN_XS = [146, 400, 146, 400];  // [0]=かんたん [1]=ふつう [2]=むずかしい [3]=とてもむずかしい
-const DIFF_BTN_YS = [118, 118, 164, 164];
+const DIFF_BTN_XS = [146, 400, 146, 400, 273];
+const DIFF_BTN_YS = [118, 118, 164, 164, 210];
 
 // ── 画面描画 ──────────────────────────────────────
 function drawSelect() {
@@ -401,21 +420,21 @@ function drawCpuSetup() {
 
   const sel = DIFF_LEVELS.find(d => d.key === difficulty);
   ctx.fillStyle = sel.color + 'bb'; ctx.font = '12px Arial, sans-serif';
-  ctx.fillText(sel.desc, W/2, 198);
+  ctx.fillText(sel.desc, W/2, 244);
 
   // ── 先行・後攻 ──
   ctx.fillStyle = '#aaddff'; ctx.font = 'bold 12px Arial, sans-serif';
-  ctx.fillText('先行・後攻', W/2, 240);
+  ctx.fillText('先行・後攻', W/2, 268);
 
-  circle(W/2 - 98, 293, 18, COL_P1);
+  circle(W/2 - 98, 318, 18, COL_P1);
   ctx.fillStyle = '#aaa'; ctx.font = '11px Arial, sans-serif';
-  ctx.fillText('あなた = 赤（先行）', W/2, 328);
-  btn(W/2, 362, 210, 48, '先行でプレイ', COL_P1, false);
+  ctx.fillText('あなた = 赤（先行）', W/2, 354);
+  btn(W/2, 388, 210, 48, '先行でプレイ', COL_P1, false);
 
-  circle(W/2 + 98, 293, 18, COL_P2);
+  circle(W/2 + 98, 318, 18, COL_P2);
   ctx.fillStyle = '#aaa';
-  ctx.fillText('あなた = 黄（後攻）', W/2, 432);
-  btn(W/2, 466, 210, 48, '後攻でプレイ', COL_P2, false);
+  ctx.fillText('あなた = 黄（後攻）', W/2, 458);
+  btn(W/2, 492, 210, 48, '後攻でプレイ', COL_P2, false);
 
   ctx.textAlign = 'left';
 }
@@ -451,7 +470,9 @@ function drawGame() {
   } else {
     let statusText, statusColor;
     if (aiPending) {
-      statusText  = difficulty === 'veryhard' ? 'CPU 思考中... (depth 9)' : 'CPU 思考中...';
+      statusText  = difficulty === 'kiwami'   ? 'CPU 思考中... (depth 12)'
+                  : difficulty === 'veryhard' ? 'CPU 思考中... (depth 9)'
+                  : 'CPU 思考中...';
       statusColor = pColor(player);
     } else {
       statusText  = `${pLabel(player)} のターン`;
@@ -461,7 +482,7 @@ function drawGame() {
     ctx.fillStyle = statusColor;
     ctx.font = 'bold 20px Arial, sans-serif';
     ctx.fillText(statusText, W/2, 30);
-    circle(W/2 - 82, 22, 9, pColor(player));
+    if (!aiPending) circle(W/2 - 82, 22, 9, pColor(player));
     if (vsAI) {
       const dl = DIFF_LEVELS.find(d => d.key === difficulty);
       ctx.fillStyle = dl.color + 'aa'; ctx.font = '11px Arial, sans-serif';
@@ -606,8 +627,8 @@ canvas.addEventListener('click', e => {
         difficulty = DIFF_LEVELS[i].key; return;
       }
     }
-    if (hit(e, W/2, 362, 210, 48)) { newGame(true, 1); return; }
-    if (hit(e, W/2, 466, 210, 48)) { newGame(true, 2); return; }
+    if (hit(e, W/2, 388, 210, 48)) { newGame(true, 1); return; }
+    if (hit(e, W/2, 492, 210, 48)) { newGame(true, 2); return; }
     return;
   }
   if ((phase === 'playing' || phase === 'over') && hit(e, W - 108 + 52, 4 + 20, 104, 40)) { undo(); return; }
