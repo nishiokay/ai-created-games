@@ -18,6 +18,7 @@ const W = canvas.width, H = canvas.height;
 let board, player, phase, winCells, humanPlayer, hoverCol;
 let aiPending = false, aiScore = null;
 let undoStack, undosLeft;
+let moveHistory = [];
 let fallingPiece = null;
 let worker = null;
 // phases: 'setup' | 'playing' | 'over'
@@ -43,6 +44,7 @@ function newGame(humanP) {
   aiScore   = null;
   undoStack = [];
   undosLeft = 3;
+  moveHistory = [];
   fallingPiece = null;
   initWorker();
   if (player !== humanPlayer) triggerAI();
@@ -75,7 +77,7 @@ function isDraw() { return board[0].every(c => c !== 0); }
 function triggerAI() {
   aiPending = true;
   aiScore   = null;
-  worker.postMessage({ board: board.map(r => [...r]), currentPlayer: player });
+  worker.postMessage({ board: board.map(r => [...r]), currentPlayer: player, moveHistory: [...moveHistory] });
 }
 
 // ── Draw utilities ────────────────────────────────
@@ -316,7 +318,7 @@ function playCol(col) {
   const row = dropRow(col);
   if (row < 0) return;
   if (player === humanPlayer) {
-    undoStack.push({ board: board.map(r => [...r]), player, aiScore });
+    undoStack.push({ board: board.map(r => [...r]), player, aiScore, moveHistory: [...moveHistory] });
   }
   startFall(col, row, player);
 }
@@ -339,6 +341,7 @@ function updateFall() {
       fp.y = targetY;
       const { col, targetRow, player: p } = fp;
       fallingPiece = null;
+      moveHistory.push(col + 1);
       board[targetRow][col] = p;
       winCells = checkWin(targetRow, col);
       if (winCells || isDraw()) { phase = 'over'; return; }
@@ -353,9 +356,10 @@ function undo() {
   if (undosLeft <= 0 || !undoStack.length || aiPending || fallingPiece) return;
   if (phase !== 'playing' && phase !== 'over') return;
   const snap = undoStack.pop();
-  board    = snap.board;
-  player   = snap.player;
-  aiScore  = snap.aiScore;
+  board       = snap.board;
+  player      = snap.player;
+  aiScore     = snap.aiScore;
+  moveHistory = snap.moveHistory ?? [];
   winCells = null;
   phase    = 'playing';
   undosLeft--;
