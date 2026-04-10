@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>4目並べ（強い人向け）</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+      color: #eee;
+      overflow-x: hidden;
+    }
+    canvas {
+      border: 2px solid #ff6600;
+      border-radius: 4px;
+      background: #0d1b2a;
+      display: block;
+      max-width: calc(100% - 8px);
+      height: auto;
+      touch-action: none;
+    }
+    #bottom-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 12px;
+    }
+    #back {
+      font-size: 13px;
+      color: #666;
+      text-decoration: none;
+    }
+    #back:hover { color: #aaa; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="bottom-row">
+    <a id="back" href="index.html">← ゲーム選択に戻る</a>
+  </div>
+  <script src="connect4-perfect.js"></script>
+</body>
+</html>
