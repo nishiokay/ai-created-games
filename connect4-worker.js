@@ -1,123 +1,208 @@
 'use strict';
 // Perfect Connect4 solver — Web Worker
 // Bitboard negamax with alpha-beta pruning + transposition table
-// Bitboard split into lo (bits 0-27, cols 0-3) and hi (bits 28-48, cols 4-6)
-// to avoid BigInt and use fast 32-bit integer arithmetic (~20-50x speedup).
+// Bitboard split: lo = bits 0-27 (cols 0-3), hi = bits 28-48 (cols 4-6)  — no BigInt
+// Option B: nonLosingMoves filter + move ordering by winning-threat count
 
 const COLS = 7, ROWS = 6, H7 = 7;
-const LO_BITS = 28; // split point
+const LO_BITS = 28;
 const LO_MASK = (1 << 28) - 1; // 0xFFFFFFF
+const HI_MASK = (1 << 21) - 1; // 0x1FFFFF
 
 // Per-column bottom bit (bit c*7), split into lo/hi
-const BOTTOM_LO = [1, 128, 16384, 2097152, 0, 0, 0];   // cols 0-3: bits 0,7,14,21
-const BOTTOM_HI = [0, 0, 0, 0, 1, 128, 16384];          // cols 4-6: bits 0,7,14 of hi
+const BOTTOM_LO = [1, 128, 16384, 2097152, 0, 0, 0];
+const BOTTOM_HI = [0, 0, 0, 0, 1, 128, 16384];
 
 // Per-column top playable bit (bit 5+c*7), split into lo/hi
-const TOP_LO = [32, 4096, 524288, 67108864, 0, 0, 0];   // cols 0-3: bits 5,12,19,26
-const TOP_HI = [0, 0, 0, 0, 32, 4096, 524288];          // cols 4-6: bits 5,12,19 of hi
+const TOP_LO = [32, 4096, 524288, 67108864, 0, 0, 0];
+const TOP_HI = [0, 0, 0, 0, 32, 4096, 524288];
 
-// BOTTOM constant = OR of all BOTTOM_MASKS (bits 0,7,14,21,28,35,42)
-// split: lo = bits 0,7,14,21; hi = bits 0,7,14 (of hi portion)
-const BOTTOM_C_LO = 2113665;  // 1+128+16384+2097152
-const BOTTOM_C_HI = 16513;    // 1+128+16384
+// BOTTOM constant: OR of all BOTTOM_MASKS
+const BOTTOM_C_LO = 2113665;  // bits 0,7,14,21
+const BOTTOM_C_HI = 16513;    // bits 0,7,14 of hi
 
-// posKey(pos,mask) = pos+mask+BOTTOM fits exactly in (28,21) bits — proven by
-// the bitboard structure (sentinel bits prevent overflow between columns/halves).
-// kl = pos_lo+mask_lo+BOTTOM_C_LO <= 2^28-1, kh = pos_hi+mask_hi+BOTTOM_C_HI <= 2^21-1
+// BOARD_MASK: all playable cells (rows 0-5 of each column), split into lo/hi
+const BOARD_LO = 133160895;   // bits 0-5, 7-12, 14-19, 21-26
+const BOARD_HI = 1040319;     // bits 0-5, 7-12, 14-19 of hi
 
-const MAX_SCORE =  18; // floor((7*6+1)/2 - 3)
-const MIN_SCORE = -18; // -floor(7*6/2 - 3)
+const MAX_SCORE =  18;
+const MIN_SCORE = -18;
 
-// Transposition table: split key stored as (lo, hi) in Int32Arrays
-const TT_SIZE   = 8388617; // large prime ~8M
+// Transposition table
+const TT_SIZE   = 8388617;
 const TT_LO     = new Int32Array(TT_SIZE);
 const TT_HI     = new Int32Array(TT_SIZE);
 const TT_VALS   = new Int8Array(TT_SIZE);
-// 2^28 mod TT_SIZE, for computing (kl + kh*2^28) % TT_SIZE without overflow
-const POW28_MOD = 268435456 % TT_SIZE; // = 8388329
+const POW28_MOD = 268435456 % TT_SIZE; // 8388329
 
 function ttIdx(kl, kh) {
   return ((kl % TT_SIZE) + (kh * POW28_MOD) % TT_SIZE) % TT_SIZE;
 }
 function ttGet(kl, kh) {
-  const i = ttIdx(kl, kh);
-  return (TT_LO[i] === kl && TT_HI[i] === kh) ? TT_VALS[i] : 0;
+  const i = ttIdx(kl, kh); return (TT_LO[i]===kl && TT_HI[i]===kh) ? TT_VALS[i] : 0;
 }
 function ttPut(kl, kh, val) {
-  const i = ttIdx(kl, kh);
-  TT_LO[i] = kl; TT_HI[i] = kh; TT_VALS[i] = val;
+  const i = ttIdx(kl, kh); TT_LO[i]=kl; TT_HI[i]=kh; TT_VALS[i]=val;
 }
 function ttReset() { TT_LO.fill(0); TT_HI.fill(0); TT_VALS.fill(0); }
 
-// Check if a position has any 4-in-a-row.
-// pos encoded as (lo, hi) split at bit 28.
-// Shift-right by n (n<28): new_lo=(lo>>>n)|((hi&((1<<n)-1))<<(28-n)), new_hi=hi>>>n
+// 4-in-a-row check. Shift-right by n: lo=(lo>>>n)|((hi&((1<<n)-1))<<(28-n)), hi=hi>>>n
 function alignment(lo, hi) {
   let mlo, mhi, tlo, thi;
-  // horizontal: shift by 7
-  mlo = (lo >>> 7) | ((hi & 127) << 21);   mhi = hi >>> 7;
-  mlo &= lo; mhi &= hi;
-  tlo = (mlo >>> 14) | ((mhi & 16383) << 14); thi = mhi >>> 14;
-  if ((tlo & mlo) | (thi & mhi)) return true;
-  // vertical: shift by 1
-  mlo = (lo >>> 1) | ((hi & 1) << 27);     mhi = hi >>> 1;
-  mlo &= lo; mhi &= hi;
-  tlo = (mlo >>> 2) | ((mhi & 3) << 26);  thi = mhi >>> 2;
-  if ((tlo & mlo) | (thi & mhi)) return true;
-  // diagonal /: shift by 8
-  mlo = (lo >>> 8) | ((hi & 255) << 20);   mhi = hi >>> 8;
-  mlo &= lo; mhi &= hi;
-  tlo = (mlo >>> 16) | ((mhi & 65535) << 12); thi = mhi >>> 16;
-  if ((tlo & mlo) | (thi & mhi)) return true;
-  // diagonal \: shift by 6
-  mlo = (lo >>> 6) | ((hi & 63) << 22);    mhi = hi >>> 6;
-  mlo &= lo; mhi &= hi;
-  tlo = (mlo >>> 12) | ((mhi & 4095) << 16); thi = mhi >>> 12;
-  if ((tlo & mlo) | (thi & mhi)) return true;
+  mlo=(lo>>>7)|((hi&127)<<21);   mhi=hi>>>7;   mlo&=lo; mhi&=hi;
+  tlo=(mlo>>>14)|((mhi&16383)<<14); thi=mhi>>>14;
+  if((tlo&mlo)|(thi&mhi)) return true;
+  mlo=(lo>>>1)|((hi&1)<<27);     mhi=hi>>>1;   mlo&=lo; mhi&=hi;
+  tlo=(mlo>>>2)|((mhi&3)<<26);   thi=mhi>>>2;
+  if((tlo&mlo)|(thi&mhi)) return true;
+  mlo=(lo>>>8)|((hi&255)<<20);   mhi=hi>>>8;   mlo&=lo; mhi&=hi;
+  tlo=(mlo>>>16)|((mhi&65535)<<12); thi=mhi>>>16;
+  if((tlo&mlo)|(thi&mhi)) return true;
+  mlo=(lo>>>6)|((hi&63)<<22);    mhi=hi>>>6;   mlo&=lo; mhi&=hi;
+  tlo=(mlo>>>12)|((mhi&4095)<<16); thi=mhi>>>12;
+  if((tlo&mlo)|(thi&mhi)) return true;
   return false;
+}
+
+// Bitset of all empty cells where placing a piece of color pl/ph creates 4-in-a-row.
+// shl by n: lo=(pl<<n)&LO_MASK, hi=((ph<<n)|(pl>>>(28-n)))&HI_MASK
+function winPos(pl, ph) {
+  const H = HI_MASK;
+  let rl=0, rh=0, p_l, p_h;
+  // Vertical (shift 1): three stacked pieces → empty cell above
+  { const s1l=(pl<<1)&LO_MASK, s1h=((ph<<1)|(pl>>>27))&H,
+          s2l=(pl<<2)&LO_MASK, s2h=((ph<<2)|(pl>>>26))&H,
+          s3l=(pl<<3)&LO_MASK, s3h=((ph<<3)|(pl>>>25))&H;
+    rl|=s1l&s2l&s3l; rh|=s1h&s2h&s3h; }
+  // Horizontal (shift 7)
+  { const s7l=(pl<<7)&LO_MASK, s7h=((ph<<7)|(pl>>>21))&H,
+          s14l=(pl<<14)&LO_MASK, s14h=((ph<<14)|(pl>>>14))&H,
+          s21l=(pl<<21)&LO_MASK, s21h=((ph<<21)|(pl>>>7))&H,
+          r7l=(pl>>>7)|((ph&127)<<21), r7h=ph>>>7,
+          r14l=(pl>>>14)|((ph&16383)<<14), r14h=ph>>>14,
+          r21l=(pl>>>21)|(ph<<7), r21h=0; // ph>>>21=0 since ph<2^21
+    p_l=s7l&s14l; p_h=s7h&s14h;
+    rl|=p_l&s21l; rh|=p_h&s21h;
+    rl|=p_l&r7l;  rh|=p_h&r7h;
+    p_l=r7l&r14l; p_h=r7h&r14h;
+    rl|=p_l&s7l;  rh|=p_h&s7h;
+    rl|=p_l&r21l; rh|=p_h&r21h; }
+  // Diagonal / (shift 6)
+  { const s6l=(pl<<6)&LO_MASK, s6h=((ph<<6)|(pl>>>22))&H,
+          s12l=(pl<<12)&LO_MASK, s12h=((ph<<12)|(pl>>>16))&H,
+          s18l=(pl<<18)&LO_MASK, s18h=((ph<<18)|(pl>>>10))&H,
+          r6l=(pl>>>6)|((ph&63)<<22), r6h=ph>>>6,
+          r12l=(pl>>>12)|((ph&4095)<<16), r12h=ph>>>12,
+          r18l=(pl>>>18)|((ph&262143)<<10), r18h=ph>>>18;
+    p_l=s6l&s12l; p_h=s6h&s12h;
+    rl|=p_l&s18l; rh|=p_h&s18h;
+    rl|=p_l&r6l;  rh|=p_h&r6h;
+    p_l=r6l&r12l; p_h=r6h&r12h;
+    rl|=p_l&s6l;  rh|=p_h&s6h;
+    rl|=p_l&r18l; rh|=p_h&r18h; }
+  // Diagonal \ (shift 8)
+  { const s8l=(pl<<8)&LO_MASK, s8h=((ph<<8)|(pl>>>20))&H,
+          s16l=(pl<<16)&LO_MASK, s16h=((ph<<16)|(pl>>>12))&H,
+          s24l=(pl<<24)&LO_MASK, s24h=((ph<<24)|(pl>>>4))&H,
+          r8l=(pl>>>8)|((ph&255)<<20), r8h=ph>>>8,
+          r16l=(pl>>>16)|((ph&65535)<<12), r16h=ph>>>16,
+          r24l=(pl>>>24)|((ph&16777215)<<4), r24h=ph>>>24;
+    p_l=s8l&s16l; p_h=s8h&s16h;
+    rl|=p_l&s24l; rh|=p_h&s24h;
+    rl|=p_l&r8l;  rh|=p_h&r8h;
+    p_l=r8l&r16l; p_h=r8h&r16h;
+    rl|=p_l&s8l;  rh|=p_h&s8h;
+    rl|=p_l&r24l; rh|=p_h&r24h; }
+  return [rl, rh];
+}
+
+// Cells where the NEXT piece can be placed (bottom-most empty cell per column)
+function possibleMask(ml, mh) {
+  return [(ml + BOTTOM_C_LO) & BOARD_LO, (mh + BOTTOM_C_HI) & BOARD_HI];
+}
+
+// Popcount of a 32-bit integer (Hamming weight)
+function popcount32(x) {
+  x = x >>> 0;
+  x -= (x >>> 1) & 0x55555555;
+  x = (x & 0x33333333) + ((x >>> 2) & 0x33333333);
+  x = (x + (x >>> 4)) & 0x0F0F0F0F;
+  return (x * 0x01010101) >>> 24;
+}
+
+// Filter moves to only non-losing ones.
+// Returns bitmask of cells we can safely play in. Returns (0,0) if all moves lose.
+// Precondition: current player cannot win immediately.
+function nonLosingMoves(pl, ph, ml, mh) {
+  const [pml, pmh] = possibleMask(ml, mh);
+  const opl = ml ^ pl, oph = mh ^ ph; // opponent's pieces
+  const [owl, owh] = winPos(opl, oph); // cells where opponent wins
+  // Forced moves: possible cells that block opponent's immediate win
+  const fol = pml & owl, foh = pmh & owh;
+  if (fol !== 0 || foh !== 0) {
+    // Multiple forced moves → we lose regardless
+    if ((fol !== 0 && foh !== 0) || (fol & (fol-1)) !== 0 || (foh & (foh-1)) !== 0)
+      return [0, 0];
+    return [fol, foh]; // exactly one forced move
+  }
+  // Remove moves that place a piece directly below an opponent winning cell
+  // (opponent_win >> 1 = cells one row below opponent winning cells)
+  const owshr1_l = (owl >>> 1) | ((owh & 1) << 27);
+  const owshr1_h = owh >>> 1;
+  return [pml & ~owshr1_l, pmh & ~owshr1_h];
 }
 
 const COL_ORDER = [3, 2, 4, 1, 5, 0, 6];
 
-// negamax: pl/ph = current player's pieces (lo/hi), ml/mh = all pieces (lo/hi)
 function negamax(pl, ph, ml, mh, moves, alpha, beta) {
   if (moves >= COLS * ROWS) return 0;
 
-  // Check if current player can win immediately
-  for (let i = 0; i < COLS; i++) {
-    const c = COL_ORDER[i];
-    if ((ml & TOP_LO[c]) | (mh & TOP_HI[c])) continue; // column full
-    let nml = ml, nmh = mh;
-    if (c < 4) nml = ml + BOTTOM_LO[c]; else nmh = mh + BOTTOM_HI[c];
-    nml |= ml; nmh |= mh; // nm = mask | (mask + BOTTOM[c])
-    if (alignment(pl | (nml ^ ml), ph | (nmh ^ mh)))
-      return Math.floor((COLS * ROWS + 1 - moves) / 2);
-  }
-
-  // Tighten upper bound
-  const max = Math.floor((COLS * ROWS - 1 - moves) / 2);
-  if (beta > max) { beta = max; if (alpha >= beta) return beta; }
-
-  // Transposition table lookup (key fits in 28+21 bits without carry)
-  const kl = pl + ml + BOTTOM_C_LO;
-  const kh = ph + mh + BOTTOM_C_HI;
-  const ttv = ttGet(kl, kh);
-  if (ttv > 0) {
-    const lb = ttv + MIN_SCORE - 1;
-    if (lb > alpha) { alpha = lb; if (alpha >= beta) return alpha; }
-  } else if (ttv < 0) {
-    const ub = ttv + MAX_SCORE;
-    if (ub < beta) { beta = ub; if (alpha >= beta) return beta; }
-  }
-
-  // Recurse over columns
+  // Immediate win check
   for (let i = 0; i < COLS; i++) {
     const c = COL_ORDER[i];
     if ((ml & TOP_LO[c]) | (mh & TOP_HI[c])) continue;
     let nml = ml, nmh = mh;
-    if (c < 4) nml = ml + BOTTOM_LO[c]; else nmh = mh + BOTTOM_HI[c];
-    nml |= ml; nmh |= mh;
-    const score = -negamax(ml ^ pl, mh ^ ph, nml, nmh, moves + 1, -beta, -alpha);
+    if (c < 4) nml = (ml + BOTTOM_LO[c]) | ml; else nmh = (mh + BOTTOM_HI[c]) | mh;
+    if (alignment(pl | (nml ^ ml), ph | (nmh ^ mh)))
+      return Math.floor((COLS * ROWS + 1 - moves) / 2);
+  }
+
+  const max = Math.floor((COLS * ROWS - 1 - moves) / 2);
+  if (beta > max) { beta = max; if (alpha >= beta) return beta; }
+
+  const kl = pl + ml + BOTTOM_C_LO, kh = ph + mh + BOTTOM_C_HI;
+  const ttv = ttGet(kl, kh);
+  if (ttv > 0) { const lb=ttv+MIN_SCORE-1; if(lb>alpha){alpha=lb; if(alpha>=beta)return alpha;} }
+  else if (ttv < 0) { const ub=ttv+MAX_SCORE; if(ub<beta){beta=ub; if(alpha>=beta)return beta;} }
+
+  // Non-losing moves filter
+  const [movl, movh] = nonLosingMoves(pl, ph, ml, mh);
+  if (movl === 0 && movh === 0)
+    return -Math.floor((COLS * ROWS - 1 - moves) / 2); // all moves lose
+
+  // Build candidate list with move ordering (sort by winning-threat count, desc)
+  const cbuf=[0,0,0,0,0,0,0], nbuf_l=[0,0,0,0,0,0,0], nbuf_h=[0,0,0,0,0,0,0], sbuf=[0,0,0,0,0,0,0];
+  let nc = 0;
+  for (let i = 0; i < COLS; i++) {
+    const c = COL_ORDER[i];
+    if ((ml & TOP_LO[c]) | (mh & TOP_HI[c])) continue;
+    let nml = ml, nmh = mh;
+    if (c < 4) nml = (ml + BOTTOM_LO[c]) | ml; else nmh = (mh + BOTTOM_HI[c]) | mh;
+    const dlo = nml ^ ml, dhi = nmh ^ mh;
+    if (!((dlo & movl) | (dhi & movh))) continue;
+    // Score: winning threats we create (cells where we'd win after this move, intersected with empty board)
+    const [wl, wh] = winPos(pl | dlo, ph | dhi);
+    const score = popcount32(wl & BOARD_LO & ~nml) + popcount32(wh & BOARD_HI & ~nmh);
+    // Insertion sort descending by score
+    let j = nc;
+    while (j > 0 && sbuf[j-1] < score) {
+      cbuf[j]=cbuf[j-1]; nbuf_l[j]=nbuf_l[j-1]; nbuf_h[j]=nbuf_h[j-1]; sbuf[j]=sbuf[j-1]; j--;
+    }
+    cbuf[j]=c; nbuf_l[j]=nml; nbuf_h[j]=nmh; sbuf[j]=score; nc++;
+  }
+
+  for (let i = 0; i < nc; i++) {
+    const score = -negamax(ml ^ pl, mh ^ ph, nbuf_l[i], nbuf_h[i], moves + 1, -beta, -alpha);
     if (score >= beta) { ttPut(kl, kh, score - MIN_SCORE + 1); return score; }
     if (score > alpha) alpha = score;
   }
@@ -129,26 +214,45 @@ function negamax(pl, ph, ml, mh, moves, alpha, beta) {
 function bestMove(pl, ph, ml, mh, moves) {
   if (moves === 0) return { col: 3, score: MAX_SCORE };
 
-  // First pass: immediate win
+  // Immediate win
   for (let i = 0; i < COLS; i++) {
     const c = COL_ORDER[i];
     if ((ml & TOP_LO[c]) | (mh & TOP_HI[c])) continue;
     let nml = ml, nmh = mh;
-    if (c < 4) nml = ml + BOTTOM_LO[c]; else nmh = mh + BOTTOM_HI[c];
-    nml |= ml; nmh |= mh;
+    if (c < 4) nml = (ml + BOTTOM_LO[c]) | ml; else nmh = (mh + BOTTOM_HI[c]) | mh;
     if (alignment(pl | (nml ^ ml), ph | (nmh ^ mh)))
       return { col: c, score: Math.floor((COLS * ROWS + 1 - moves) / 2) };
   }
 
+  const [movl, movh] = nonLosingMoves(pl, ph, ml, mh);
+  if (movl === 0 && movh === 0) {
+    const col = COL_ORDER.find(c => !((ml & TOP_LO[c]) | (mh & TOP_HI[c])));
+    return { col, score: -Math.floor((COLS * ROWS - 1 - moves) / 2) };
+  }
+
   let bestCol = -1, bestScore = -Infinity;
+  // Move ordering: sort by winning-threat count descending
+  const cbuf=[0,0,0,0,0,0,0], nbuf_l=[0,0,0,0,0,0,0], nbuf_h=[0,0,0,0,0,0,0], sbuf=[0,0,0,0,0,0,0];
+  let nc = 0;
   for (let i = 0; i < COLS; i++) {
     const c = COL_ORDER[i];
     if ((ml & TOP_LO[c]) | (mh & TOP_HI[c])) continue;
     let nml = ml, nmh = mh;
-    if (c < 4) nml = ml + BOTTOM_LO[c]; else nmh = mh + BOTTOM_HI[c];
-    nml |= ml; nmh |= mh;
-    const score = -negamax(ml ^ pl, mh ^ ph, nml, nmh, moves + 1, -MAX_SCORE, MAX_SCORE);
-    if (score > bestScore) { bestScore = score; bestCol = c; }
+    if (c < 4) nml = (ml + BOTTOM_LO[c]) | ml; else nmh = (mh + BOTTOM_HI[c]) | mh;
+    const dlo = nml ^ ml, dhi = nmh ^ mh;
+    if (!((dlo & movl) | (dhi & movh))) continue;
+    const [wl, wh] = winPos(pl | dlo, ph | dhi);
+    const score = popcount32(wl & BOARD_LO & ~nml) + popcount32(wh & BOARD_HI & ~nmh);
+    let j = nc;
+    while (j > 0 && sbuf[j-1] < score) {
+      cbuf[j]=cbuf[j-1]; nbuf_l[j]=nbuf_l[j-1]; nbuf_h[j]=nbuf_h[j-1]; sbuf[j]=sbuf[j-1]; j--;
+    }
+    cbuf[j]=c; nbuf_l[j]=nml; nbuf_h[j]=nmh; sbuf[j]=score; nc++;
+  }
+
+  for (let i = 0; i < nc; i++) {
+    const score = -negamax(ml ^ pl, mh ^ ph, nbuf_l[i], nbuf_h[i], moves + 1, -MAX_SCORE, MAX_SCORE);
+    if (score > bestScore) { bestScore = score; bestCol = cbuf[i]; }
   }
 
   if (bestCol < 0) bestCol = COL_ORDER.find(c => !((ml & TOP_LO[c]) | (mh & TOP_HI[c])));
@@ -164,15 +268,11 @@ function boardToBitboard(board, currentPlayer) {
   for (let c = 0; c < COLS; c++) {
     for (let r = 0; r < ROWS; r++) {
       if (board[r][c]) {
-        const bit = c * H7 + (ROWS - 1 - r); // bitrow: row 0 (top) -> bitrow 5
+        const bit = c * H7 + (ROWS - 1 - r);
         if (bit < LO_BITS) {
-          const b = 1 << bit;
-          ml |= b;
-          if (board[r][c] === currentPlayer) pl |= b;
+          const b = 1 << bit; ml |= b; if (board[r][c] === currentPlayer) pl |= b;
         } else {
-          const b = 1 << (bit - LO_BITS);
-          mh |= b;
-          if (board[r][c] === currentPlayer) ph |= b;
+          const b = 1 << (bit - LO_BITS); mh |= b; if (board[r][c] === currentPlayer) ph |= b;
         }
       }
     }
@@ -182,15 +282,11 @@ function boardToBitboard(board, currentPlayer) {
 
 self.onmessage = function({ data }) {
   const { board, currentPlayer, moveHistory = [] } = data;
-
-  // Opening book lookup: covers first 4 total moves (instant, no search).
   const bookKey = moveHistory.join('');
   if (bookKey in OPENING_BOOK) {
     self.postMessage({ col: OPENING_BOOK[bookKey], score: null, fromBook: true });
     return;
   }
-
-  // Local perfect solver for deeper positions.
   ttReset();
   const { pl, ph, ml, mh } = boardToBitboard(board, currentPlayer);
   let moveCount = 0;
