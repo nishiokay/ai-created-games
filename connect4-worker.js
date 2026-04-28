@@ -1,34 +1,28 @@
 'use strict';
 // Perfect Connect4 solver — Web Worker
-// Bitboard negamax with alpha-beta pruning + transposition table
-// Bitboard split: lo = bits 0-27 (cols 0-3), hi = bits 28-48 (cols 4-6)  — no BigInt
-// Option B: nonLosingMoves filter + move ordering by winning-threat count
+// Bitboard negamax with alpha-beta + transposition table
+// Bitboard split: lo = bits 0-27 (cols 0-3), hi = bits 28-48 (cols 4-6) — no BigInt
+// Option A: lo/hi Number pair (no BigInt)
+// Option B: nonLosingMoves filter — ZERO heap allocations in hot path
+//   winPosTo / nonLosingMovesTo write to module-level vars, not arrays,
+//   so millions of recursive calls never trigger GC.
 
 const COLS = 7, ROWS = 6, H7 = 7;
 const LO_BITS = 28;
 const LO_MASK = (1 << 28) - 1; // 0xFFFFFFF
 const HI_MASK = (1 << 21) - 1; // 0x1FFFFF
 
-// Per-column bottom bit (bit c*7), split into lo/hi
 const BOTTOM_LO = [1, 128, 16384, 2097152, 0, 0, 0];
 const BOTTOM_HI = [0, 0, 0, 0, 1, 128, 16384];
-
-// Per-column top playable bit (bit 5+c*7), split into lo/hi
-const TOP_LO = [32, 4096, 524288, 67108864, 0, 0, 0];
-const TOP_HI = [0, 0, 0, 0, 32, 4096, 524288];
-
-// BOTTOM constant: OR of all BOTTOM_MASKS
+const TOP_LO    = [32, 4096, 524288, 67108864, 0, 0, 0];
+const TOP_HI    = [0, 0, 0, 0, 32, 4096, 524288];
 const BOTTOM_C_LO = 2113665;  // bits 0,7,14,21
 const BOTTOM_C_HI = 16513;    // bits 0,7,14 of hi
+const BOARD_LO    = 133160895; // playable cells lo (rows 0-5 of cols 0-3)
+const BOARD_HI    = 1040319;   // playable cells hi (rows 0-5 of cols 4-6)
 
-// BOARD_MASK: all playable cells (rows 0-5 of each column), split into lo/hi
-const BOARD_LO = 133160895;   // bits 0-5, 7-12, 14-19, 21-26
-const BOARD_HI = 1040319;     // bits 0-5, 7-12, 14-19 of hi
+const MAX_SCORE = 18, MIN_SCORE = -18;
 
-const MAX_SCORE =  18;
-const MIN_SCORE = -18;
-
-// Transposition table
 const TT_SIZE   = 8388617;
 const TT_LO     = new Int32Array(TT_SIZE);
 const TT_HI     = new Int32Array(TT_SIZE);
@@ -46,7 +40,7 @@ function ttPut(kl, kh, val) {
 }
 function ttReset() { TT_LO.fill(0); TT_HI.fill(0); TT_VALS.fill(0); }
 
-// 4-in-a-row check. Shift-right by n: lo=(lo>>>n)|((hi&((1<<n)-1))<<(28-n)), hi=hi>>>n
+// Shift-right by n (n<28): lo=(lo>>>n)|((hi&((1<<n)-1))<<(28-n)), hi=hi>>>n
 function alignment(lo, hi) {
   let mlo, mhi, tlo, thi;
   mlo=(lo>>>7)|((hi&127)<<21);   mhi=hi>>>7;   mlo&=lo; mhi&=hi;
@@ -64,23 +58,30 @@ function alignment(lo, hi) {
   return false;
 }
 
-// Bitset of all empty cells where placing a piece of color pl/ph creates 4-in-a-row.
-// shl by n: lo=(pl<<n)&LO_MASK, hi=((ph<<n)|(pl>>>(28-n)))&HI_MASK
-function winPos(pl, ph) {
+// Module-level out-vars for winPosTo — safe because caller always extracts
+// the values into LOCAL variables BEFORE any recursive call that might overwrite them.
+let _wl = 0, _wh = 0;
+
+// Compute all cells where placing pl/ph's piece creates 4-in-a-row.
+// Result written to _wl / _wh (no heap allocation).
+// shl by n: lo=((pl & ((1<<(28-n))-1)) << n), hi=((ph<<n)|(pl>>>(28-n)))&HI_MASK
+function winPosTo(pl, ph) {
   const H = HI_MASK;
   let rl=0, rh=0, p_l, p_h;
-  // Vertical (shift 1): three stacked pieces → empty cell above
-  { const s1l=(pl<<1)&LO_MASK, s1h=((ph<<1)|(pl>>>27))&H,
-          s2l=(pl<<2)&LO_MASK, s2h=((ph<<2)|(pl>>>26))&H,
-          s3l=(pl<<3)&LO_MASK, s3h=((ph<<3)|(pl>>>25))&H;
+  // Vertical (shift 1): three stacked below → empty above
+  { const m=(1<<27)-1,
+          s1l=(pl&m)<<1,  s1h=((ph<<1)|(pl>>>27))&H,
+          s2l=(pl&(m>>1))<<2, s2h=((ph<<2)|(pl>>>26))&H,
+          s3l=(pl&(m>>2))<<3, s3h=((ph<<3)|(pl>>>25))&H;
     rl|=s1l&s2l&s3l; rh|=s1h&s2h&s3h; }
   // Horizontal (shift 7)
-  { const s7l=(pl<<7)&LO_MASK, s7h=((ph<<7)|(pl>>>21))&H,
-          s14l=(pl<<14)&LO_MASK, s14h=((ph<<14)|(pl>>>14))&H,
-          s21l=(pl<<21)&LO_MASK, s21h=((ph<<21)|(pl>>>7))&H,
+  { const m7=(1<<21)-1, m14=(1<<14)-1, m21=(1<<7)-1;
+    const s7l=(pl&m7)<<7,  s7h=((ph<<7)|(pl>>>21))&H,
+          s14l=(pl&m14)<<14, s14h=((ph<<14)|(pl>>>14))&H,
+          s21l=(pl&m21)<<21, s21h=((ph<<21)|(pl>>>7))&H,
           r7l=(pl>>>7)|((ph&127)<<21), r7h=ph>>>7,
           r14l=(pl>>>14)|((ph&16383)<<14), r14h=ph>>>14,
-          r21l=(pl>>>21)|(ph<<7), r21h=0; // ph>>>21=0 since ph<2^21
+          r21l=(pl>>>21)|(ph<<7), r21h=0;
     p_l=s7l&s14l; p_h=s7h&s14h;
     rl|=p_l&s21l; rh|=p_h&s21h;
     rl|=p_l&r7l;  rh|=p_h&r7h;
@@ -88,9 +89,10 @@ function winPos(pl, ph) {
     rl|=p_l&s7l;  rh|=p_h&s7h;
     rl|=p_l&r21l; rh|=p_h&r21h; }
   // Diagonal / (shift 6)
-  { const s6l=(pl<<6)&LO_MASK, s6h=((ph<<6)|(pl>>>22))&H,
-          s12l=(pl<<12)&LO_MASK, s12h=((ph<<12)|(pl>>>16))&H,
-          s18l=(pl<<18)&LO_MASK, s18h=((ph<<18)|(pl>>>10))&H,
+  { const m6=(1<<22)-1, m12=(1<<16)-1, m18=(1<<10)-1;
+    const s6l=(pl&m6)<<6,  s6h=((ph<<6)|(pl>>>22))&H,
+          s12l=(pl&m12)<<12, s12h=((ph<<12)|(pl>>>16))&H,
+          s18l=(pl&m18)<<18, s18h=((ph<<18)|(pl>>>10))&H,
           r6l=(pl>>>6)|((ph&63)<<22), r6h=ph>>>6,
           r12l=(pl>>>12)|((ph&4095)<<16), r12h=ph>>>12,
           r18l=(pl>>>18)|((ph&262143)<<10), r18h=ph>>>18;
@@ -101,9 +103,10 @@ function winPos(pl, ph) {
     rl|=p_l&s6l;  rh|=p_h&s6h;
     rl|=p_l&r18l; rh|=p_h&r18h; }
   // Diagonal \ (shift 8)
-  { const s8l=(pl<<8)&LO_MASK, s8h=((ph<<8)|(pl>>>20))&H,
-          s16l=(pl<<16)&LO_MASK, s16h=((ph<<16)|(pl>>>12))&H,
-          s24l=(pl<<24)&LO_MASK, s24h=((ph<<24)|(pl>>>4))&H,
+  { const m8=(1<<20)-1, m16=(1<<12)-1, m24=(1<<4)-1;
+    const s8l=(pl&m8)<<8,  s8h=((ph<<8)|(pl>>>20))&H,
+          s16l=(pl&m16)<<16, s16h=((ph<<16)|(pl>>>12))&H,
+          s24l=(pl&m24)<<24, s24h=((ph<<24)|(pl>>>4))&H,
           r8l=(pl>>>8)|((ph&255)<<20), r8h=ph>>>8,
           r16l=(pl>>>16)|((ph&65535)<<12), r16h=ph>>>16,
           r24l=(pl>>>24)|((ph&16777215)<<4), r24h=ph>>>24;
@@ -113,15 +116,42 @@ function winPos(pl, ph) {
     p_l=r8l&r16l; p_h=r8h&r16h;
     rl|=p_l&s8l;  rh|=p_h&s8h;
     rl|=p_l&r24l; rh|=p_h&r24h; }
-  return [rl, rh];
+  _wl=rl; _wh=rh;
 }
 
-// Cells where the NEXT piece can be placed (bottom-most empty cell per column)
-function possibleMask(ml, mh) {
-  return [(ml + BOTTOM_C_LO) & BOARD_LO, (mh + BOTTOM_C_HI) & BOARD_HI];
+// nonLosingMovesTo の出力用モジュール変数
+let _nl = 0, _nh = 0;
+
+// 「打っても即負けしない手」のビットマスクを _nl / _nh に書き込む。
+// 0 になった場合は、どの手を打っても相手の次手で負けることを意味する。
+// 注意: 内部で winPosTo を呼ぶため _wl/_wh が上書きされる。呼び出し元は
+// 戻った直後に _nl/_nh をローカル変数へ退避してから再帰に入ること。
+function nonLosingMovesTo(pl, ph, ml, mh) {
+  const pml = (ml + BOTTOM_C_LO) & BOARD_LO;
+  const pmh = (mh + BOTTOM_C_HI) & BOARD_HI;
+  winPosTo(ml ^ pl, mh ^ ph); // 相手の勝ち筋マスを _wl, _wh に算出
+  const owl = _wl, owh = _wh; // 再帰で上書きされる前にローカルに退避
+  const fol = pml & owl, foh = pmh & owh;
+  let pmlR = pml, pmhR = pmh;
+  if (fol !== 0 || foh !== 0) {
+    // 強制防御(相手の即勝ちマスが今打てる)が複数あれば、どう打っても負け
+    if ((fol !== 0 && foh !== 0) || (fol & (fol-1)) !== 0 || (foh & (foh-1)) !== 0)
+      { _nl = 0; _nh = 0; return; }
+    // 強制防御が1つだけ → そこに打つしかないので候補を絞り込む
+    pmlR = fol; pmhR = foh;
+  }
+  // Pons のフィルタ: 自分が打つマスのすぐ上が相手の勝ち筋なら、そこに打つと
+  // 次の手で相手に勝たれるので除外する。行6(番兵)の勝ち筋が行5の候補を
+  // 誤って封じないよう、シフト前に BOARD_LO/BOARD_HI でマスクしておく。
+  // 強制防御の場合にも適用することで、強制マスの真上に積み脅威があるケース
+  // (防御不能な二段脅威)を正しく「打つ手なし」として返せる。
+  const bowll = owl & BOARD_LO, bowlh = owh & BOARD_HI;
+  const shr1l = (bowll >>> 1) | ((bowlh & 1) << 27);
+  const shr1h = bowlh >>> 1;
+  _nl = pmlR & ~shr1l; _nh = pmhR & ~shr1h;
 }
 
-// Popcount of a 32-bit integer (Hamming weight)
+// Popcount of a 32-bit value
 function popcount32(x) {
   x = x >>> 0;
   x -= (x >>> 1) & 0x55555555;
@@ -130,30 +160,22 @@ function popcount32(x) {
   return (x * 0x01010101) >>> 24;
 }
 
-// Filter moves to only non-losing ones.
-// Returns bitmask of cells we can safely play in. Returns (0,0) if all moves lose.
-// Precondition: current player cannot win immediately.
-function nonLosingMoves(pl, ph, ml, mh) {
-  const [pml, pmh] = possibleMask(ml, mh);
-  const opl = ml ^ pl, oph = mh ^ ph; // opponent's pieces
-  const [owl, owh] = winPos(opl, oph); // cells where opponent wins
-  // Forced moves: possible cells that block opponent's immediate win
-  const fol = pml & owl, foh = pmh & owh;
-  if (fol !== 0 || foh !== 0) {
-    // Multiple forced moves → we lose regardless
-    if ((fol !== 0 && foh !== 0) || (fol & (fol-1)) !== 0 || (foh & (foh-1)) !== 0)
-      return [0, 0];
-    return [fol, foh]; // exactly one forced move
-  }
-  // Remove moves that place a piece directly below an opponent winning cell
-  // (opponent_win >> 1 = cells one row below opponent winning cells)
-  const owshr1_l = (owl >>> 1) | ((owh & 1) << 27);
-  const owshr1_h = owh >>> 1;
-  return [pml & ~owshr1_l, pmh & ~owshr1_h];
-}
+// Pre-allocated buffers for bestMove (called once per AI turn — safe)
+const _cbuf   = new Int32Array(COLS);
+const _nbuf_l = new Int32Array(COLS);
+const _nbuf_h = new Int32Array(COLS);
+const _sbuf   = new Int32Array(COLS);
+
+// Pre-allocated move-ordering stacks for negamax recursion.
+// Each recursion depth (0..41) gets its own COLS-wide slot.
+// Using flat arrays indexed by moves*COLS+i avoids any heap allocation.
+const _ORD_LO  = new Int32Array(42 * COLS);
+const _ORD_HI  = new Int32Array(42 * COLS);
+const _ORD_SC  = new Int32Array(42 * COLS);
 
 const COL_ORDER = [3, 2, 4, 1, 5, 0, 6];
 
+// negamax: ZERO heap allocations — all intermediate results in locals or module vars.
 function negamax(pl, ph, ml, mh, moves, alpha, beta) {
   if (moves >= COLS * ROWS) return 0;
 
@@ -175,13 +197,16 @@ function negamax(pl, ph, ml, mh, moves, alpha, beta) {
   if (ttv > 0) { const lb=ttv+MIN_SCORE-1; if(lb>alpha){alpha=lb; if(alpha>=beta)return alpha;} }
   else if (ttv < 0) { const ub=ttv+MAX_SCORE; if(ub<beta){beta=ub; if(alpha>=beta)return beta;} }
 
-  // Non-losing moves filter
-  const [movl, movh] = nonLosingMoves(pl, ph, ml, mh);
+  // 非負け手フィルタ(_nl/_nh に書き込まれるので再帰前にローカルへ退避)
+  nonLosingMovesTo(pl, ph, ml, mh);
+  const movl = _nl, movh = _nh; // 再帰で上書きされる前に退避
+  // 打つ手が全滅 → 相手は次手で勝てる。スコアは -(盤マス数 - 手数)/2。
   if (movl === 0 && movh === 0)
-    return -Math.floor((COLS * ROWS - 1 - moves) / 2); // all moves lose
+    return -Math.floor((COLS * ROWS - moves) / 2);
 
-  // Build candidate list with move ordering (sort by winning-threat count, desc)
-  const cbuf=[0,0,0,0,0,0,0], nbuf_l=[0,0,0,0,0,0,0], nbuf_h=[0,0,0,0,0,0,0], sbuf=[0,0,0,0,0,0,0];
+  // Move ordering: score each candidate by #winning threats it opens, sort desc.
+  // Uses pre-allocated slot at depth `moves` — safe from overwrite by recursion.
+  const base = moves * COLS;
   let nc = 0;
   for (let i = 0; i < COLS; i++) {
     const c = COL_ORDER[i];
@@ -190,19 +215,17 @@ function negamax(pl, ph, ml, mh, moves, alpha, beta) {
     if (c < 4) nml = (ml + BOTTOM_LO[c]) | ml; else nmh = (mh + BOTTOM_HI[c]) | mh;
     const dlo = nml ^ ml, dhi = nmh ^ mh;
     if (!((dlo & movl) | (dhi & movh))) continue;
-    // Score: winning threats we create (cells where we'd win after this move, intersected with empty board)
-    const [wl, wh] = winPos(pl | dlo, ph | dhi);
-    const score = popcount32(wl & BOARD_LO & ~nml) + popcount32(wh & BOARD_HI & ~nmh);
-    // Insertion sort descending by score
+    winPosTo(pl | dlo, ph | dhi); // score = winning threats opened (overwrites _wl/_wh; safe — movl/movh already saved)
+    const sc = popcount32(_wl & BOARD_LO & ~nml) + popcount32(_wh & BOARD_HI & ~nmh);
     let j = nc;
-    while (j > 0 && sbuf[j-1] < score) {
-      cbuf[j]=cbuf[j-1]; nbuf_l[j]=nbuf_l[j-1]; nbuf_h[j]=nbuf_h[j-1]; sbuf[j]=sbuf[j-1]; j--;
+    while (j > 0 && _ORD_SC[base + j - 1] < sc) {
+      _ORD_LO[base+j]=_ORD_LO[base+j-1]; _ORD_HI[base+j]=_ORD_HI[base+j-1]; _ORD_SC[base+j]=_ORD_SC[base+j-1]; j--;
     }
-    cbuf[j]=c; nbuf_l[j]=nml; nbuf_h[j]=nmh; sbuf[j]=score; nc++;
+    _ORD_LO[base+j]=nml; _ORD_HI[base+j]=nmh; _ORD_SC[base+j]=sc; nc++;
   }
 
   for (let i = 0; i < nc; i++) {
-    const score = -negamax(ml ^ pl, mh ^ ph, nbuf_l[i], nbuf_h[i], moves + 1, -beta, -alpha);
+    const score = -negamax(ml ^ pl, mh ^ ph, _ORD_LO[base+i], _ORD_HI[base+i], moves + 1, -beta, -alpha);
     if (score >= beta) { ttPut(kl, kh, score - MIN_SCORE + 1); return score; }
     if (score > alpha) alpha = score;
   }
@@ -214,7 +237,6 @@ function negamax(pl, ph, ml, mh, moves, alpha, beta) {
 function bestMove(pl, ph, ml, mh, moves) {
   if (moves === 0) return { col: 3, score: MAX_SCORE };
 
-  // Immediate win
   for (let i = 0; i < COLS; i++) {
     const c = COL_ORDER[i];
     if ((ml & TOP_LO[c]) | (mh & TOP_HI[c])) continue;
@@ -224,15 +246,15 @@ function bestMove(pl, ph, ml, mh, moves) {
       return { col: c, score: Math.floor((COLS * ROWS + 1 - moves) / 2) };
   }
 
-  const [movl, movh] = nonLosingMoves(pl, ph, ml, mh);
+  nonLosingMovesTo(pl, ph, ml, mh);
+  const movl = _nl, movh = _nh;
+  // 打つ手が全滅 → どこに打っても相手が次手で勝つ。諦めて任意の合法手を返す。
   if (movl === 0 && movh === 0) {
     const col = COL_ORDER.find(c => !((ml & TOP_LO[c]) | (mh & TOP_HI[c])));
-    return { col, score: -Math.floor((COLS * ROWS - 1 - moves) / 2) };
+    return { col, score: -Math.floor((COLS * ROWS - moves) / 2) };
   }
 
-  let bestCol = -1, bestScore = -Infinity;
-  // Move ordering: sort by winning-threat count descending
-  const cbuf=[0,0,0,0,0,0,0], nbuf_l=[0,0,0,0,0,0,0], nbuf_h=[0,0,0,0,0,0,0], sbuf=[0,0,0,0,0,0,0];
+  // Move ordering: sort candidates by winning-threat count (desc) using pre-alloc buffers
   let nc = 0;
   for (let i = 0; i < COLS; i++) {
     const c = COL_ORDER[i];
@@ -241,18 +263,20 @@ function bestMove(pl, ph, ml, mh, moves) {
     if (c < 4) nml = (ml + BOTTOM_LO[c]) | ml; else nmh = (mh + BOTTOM_HI[c]) | mh;
     const dlo = nml ^ ml, dhi = nmh ^ mh;
     if (!((dlo & movl) | (dhi & movh))) continue;
-    const [wl, wh] = winPos(pl | dlo, ph | dhi);
-    const score = popcount32(wl & BOARD_LO & ~nml) + popcount32(wh & BOARD_HI & ~nmh);
+    // Score: winning threats created for current player (writes _wl/_wh)
+    winPosTo(pl | dlo, ph | dhi);
+    const score = popcount32(_wl & BOARD_LO & ~nml) + popcount32(_wh & BOARD_HI & ~nmh);
     let j = nc;
-    while (j > 0 && sbuf[j-1] < score) {
-      cbuf[j]=cbuf[j-1]; nbuf_l[j]=nbuf_l[j-1]; nbuf_h[j]=nbuf_h[j-1]; sbuf[j]=sbuf[j-1]; j--;
+    while (j > 0 && _sbuf[j-1] < score) {
+      _cbuf[j]=_cbuf[j-1]; _nbuf_l[j]=_nbuf_l[j-1]; _nbuf_h[j]=_nbuf_h[j-1]; _sbuf[j]=_sbuf[j-1]; j--;
     }
-    cbuf[j]=c; nbuf_l[j]=nml; nbuf_h[j]=nmh; sbuf[j]=score; nc++;
+    _cbuf[j]=c; _nbuf_l[j]=nml; _nbuf_h[j]=nmh; _sbuf[j]=score; nc++;
   }
 
+  let bestCol = -1, bestScore = -Infinity;
   for (let i = 0; i < nc; i++) {
-    const score = -negamax(ml ^ pl, mh ^ ph, nbuf_l[i], nbuf_h[i], moves + 1, -MAX_SCORE, MAX_SCORE);
-    if (score > bestScore) { bestScore = score; bestCol = cbuf[i]; }
+    const score = -negamax(ml ^ pl, mh ^ ph, _nbuf_l[i], _nbuf_h[i], moves + 1, -MAX_SCORE, MAX_SCORE);
+    if (score > bestScore) { bestScore = score; bestCol = _cbuf[i]; }
   }
 
   if (bestCol < 0) bestCol = COL_ORDER.find(c => !((ml & TOP_LO[c]) | (mh & TOP_HI[c])));
